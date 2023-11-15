@@ -1,0 +1,7 @@
+[build]
+rustflags = [
+	#"-C", "relocation-model=dynamic-no-pic", 
+	#"-Clink-args=-Wl,-image-base=0x100000000"
+	"-C", "linker=clang", "-C", "link-arg=-fuse-ld=lld",
+	"-Clink-args=-Wl,--image-base=0x100000000",
+]

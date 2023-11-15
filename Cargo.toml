@@ -1,0 +1,18 @@
+[package]
+name = "perfect"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+perf-event = { git = "https://github.com/eigenform/perf-event", branch = "raw-event" }
+nix = "0.26.2"
+dynasmrt = "*"
+rand = "0.8.5"
+itertools = "0.11.0"
+
+[dependencies.iced-x86]
+version = "*"
+
+
