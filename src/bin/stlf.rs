@@ -3,6 +3,8 @@ use perfect::codegen::*;
 use perfect::zen2::*;
 use std::collections::*;
 
+use itertools::*;
+
 fn emit_test(mut emitter: impl FnMut(&mut PerfectFn)) -> PerfectFn {
     let mut f = PerfectFn::new("test");
 
@@ -88,61 +90,58 @@ fn emit_stlf_eligibility(f: &mut PerfectFn) {
     );
 }
 
-/// Test 2. After 49 in-flight stores, forwarding never occurs. 
-/// This probably reflects the store queue capacity.
-fn emit_stq_capacity(f: &mut PerfectFn) {
-    dynasm!(f.asm
-        ; mov [0x0001_0000], al // Store we want to forward
-        ; mov [0x0001_0001], al
-        ; mov [0x0001_0002], al
-        ; mov [0x0001_0003], al
-        ; mov [0x0001_0004], al
-        ; mov [0x0001_0005], al
-        ; mov [0x0001_0006], al
-        ; mov [0x0001_0007], al
-        ; mov [0x0001_0008], al
-        ; mov [0x0001_0009], al
-        ; mov [0x0001_0011], al
-        ; mov [0x0001_0012], al
-        ; mov [0x0001_0013], al
-        ; mov [0x0001_0014], al
-        ; mov [0x0001_0015], al
-        ; mov [0x0001_0016], al
-        ; mov [0x0001_0017], al
-        ; mov [0x0001_0018], al
-        ; mov [0x0001_0019], al
-        ; mov [0x0001_0020], al
-        ; mov [0x0001_0021], al
-        ; mov [0x0001_0022], al
-        ; mov [0x0001_0023], al
-        ; mov [0x0001_0024], al
-        ; mov [0x0001_0025], al
-        ; mov [0x0001_0026], al
-        ; mov [0x0001_0027], al
-        ; mov [0x0001_0028], al
-        ; mov [0x0001_0029], al
-        ; mov [0x0001_0030], al
-        ; mov [0x0001_0031], al
-        ; mov [0x0001_0032], al
-        ; mov [0x0001_0033], al
-        ; mov [0x0001_0034], al
-        ; mov [0x0001_0035], al
-        ; mov [0x0001_0036], al
-        ; mov [0x0001_0037], al
-        ; mov [0x0001_0038], al
-        ; mov [0x0001_0039], al
-        ; mov [0x0001_0040], al
-        ; mov [0x0001_0041], al
-        ; mov [0x0001_0042], al
-        ; mov [0x0001_0043], al
-        ; mov [0x0001_0044], al
-        ; mov [0x0001_0045], al
-        ; mov [0x0001_0046], al
-        ; mov [0x0001_0047], al
-        ; mov [0x0001_0048], al
-        ; mov bl, [0x0001_0000] // Target load
-    );
+
+/// Place some number of stores in-between STLF producer and consumer. 
+/// At some point, STLF events will not occur due to store queue capacity.
+fn emit_stq_capacity(f: &mut PerfectFn, width: usize, depth: usize) {
+
+    // The store we want to forward
+    match width {
+        1 => { dynasm!(f.asm ; mov [0x0001_0000], al ); },
+        2 => { dynasm!(f.asm ; mov [0x0001_0000], ah ); },
+        4 => { dynasm!(f.asm ; mov [0x0001_0000], eax ); },
+        8 => { dynasm!(f.asm ; mov [0x0001_0000], rax ); },
+        _ => unreachable!(),
+    }
+
+    // Generate some random non-aliasing padding stores to fill the STQ
+    let mut r: Vec<i32> = match width { 
+        1 => (0x0001_0001..=0x0001_0fff).collect(),
+        2 => (0x0001_0002..=0x0001_0ffe).collect(),
+        4 => (0x0001_0004..=0x0001_0ffc).collect(),
+        8 => (0x0001_0008..=0x0001_0ff8).collect(),
+        _ => unreachable!(),
+    };
+    let mut rng = rand::thread_rng();
+    r.shuffle(&mut rng);
+    for bits in &r[1..=depth] {
+        let addr = 0x0001_0000 | bits;
+        match width {
+            1 => { dynasm!(f.asm ; mov [addr], al); },
+            2 => { dynasm!(f.asm ; mov [addr], ah); },
+            4 => { dynasm!(f.asm ; mov [addr], eax); },
+            8 => { dynasm!(f.asm ; mov [addr], rax); },
+            _ => unreachable!(),
+        }
+    }
+
+    // Load whose result we expect to be forwarded
+    match width {
+        1 => { dynasm!(f.asm ; mov bl, [0x0001_0000] ); },
+        2 => { dynasm!(f.asm ; mov bh, [0x0001_0000] ); },
+        4 => { dynasm!(f.asm ; mov ebx, [0x0001_0000] ); },
+        8 => { dynasm!(f.asm ; mov rbx, [0x0001_0000] ); },
+        _ => unreachable!(),
+    }
 }
+
+// It seems like there can be 48 in-flight stores. 
+fn emit_stq_capacity_byte(f: &mut PerfectFn) { emit_stq_capacity(f, 1, 47); }
+fn emit_stq_capacity_half(f: &mut PerfectFn) { emit_stq_capacity(f, 2, 47); }
+fn emit_stq_capacity_word(f: &mut PerfectFn) { emit_stq_capacity(f, 4, 47); }
+fn emit_stq_capacity_quad(f: &mut PerfectFn) { emit_stq_capacity(f, 8, 47); }
+
+
 
 /// Test 3. Memory renaming relies on displacement bits [9:3].
 /// When other bits are set, memory renaming events never occur.
@@ -347,11 +346,14 @@ fn main() {
     floor.disas();
     println!();
 
-    //let f = emit_test(emit_stlf_eligibility);
-    //let f = emit_test(emit_stq_capacity);
-    //let f = emit_test(emit_renaming_disp_bits);
-    //let f = emit_test(emit_renaming_disp_bits_permute);
-    let mut f = emit_test(emit_renaming_window);
+    //let mut f = emit_test(emit_stlf_eligibility);
+    //let mut f = emit_test(emit_stq_capacity_byte);
+    //let mut f = emit_test(emit_stq_capacity_half);
+    let mut f = emit_test(emit_stq_capacity_word);
+    //let mut f = emit_test(emit_stq_capacity_quad);
+    //let mut f = emit_test(emit_renaming_disp_bits);
+    //let mut f = emit_test(emit_renaming_disp_bits_permute);
+    //let mut f = emit_test(emit_renaming_window);
 
     #[repr(C, align(0x10000))]
     pub struct Storage {
