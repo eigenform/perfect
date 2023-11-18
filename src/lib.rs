@@ -15,6 +15,7 @@ use std::sync::RwLockReadGuard;
 use iced_x86::{ 
     Decoder, DecoderOptions, Instruction, Formatter, IntelFormatter 
 };
+use rand::rngs::ThreadRng;
 
 
 pub use itertools::*;
@@ -337,6 +338,51 @@ impl PerfectHarness {
 
         Ok((results, gpr_dumps))
     }
+
+    pub fn measure_vary(&mut self, 
+        f: &mut PerfectFn, 
+        event: u16,
+        mask: u8,
+        iters: usize, 
+        mut func: impl FnMut(&mut ThreadRng) -> (usize, usize),
+    ) -> Result<(Vec<usize>, Option<Vec<GprState>>), &str>
+    {
+        let harness_func = if let Some(f) = self.harness_fn { f } 
+        else { 
+            return Err("harness not emitted");
+        };
+
+        let mut rng = rand::thread_rng();
+        let reader = f.asm.reader();
+        let tgt_buf = reader.lock();
+        let tgt_ptr = tgt_buf.ptr(AssemblyOffset(0));
+
+        let mut results = Vec::new();
+        let mut gpr_dumps = if self.dump_gpr { Some(Vec::new()) } else { None };
+
+        let cfg = Self::make_cfg(event, mask);
+        let mut ctr = Builder::new()
+            .kind(Event::Raw(cfg))
+            .build().unwrap();
+
+        for i in 0..iters {
+            self.gpr_state.clear();
+            ctr.reset().unwrap();
+            ctr.enable().unwrap();
+
+            let (rdi, rsi) = func(&mut rng);
+            let res = harness_func(rdi, rsi, tgt_ptr as usize);
+
+            ctr.disable().unwrap();
+            results.push(res);
+            if let Some(ref mut dumps) = gpr_dumps {
+                dumps.push(*self.gpr_state);
+            }
+        }
+
+        Ok((results, gpr_dumps))
+    }
+
 
 
 }

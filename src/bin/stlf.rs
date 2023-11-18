@@ -114,13 +114,12 @@ fn emit_stq_capacity(f: &mut PerfectFn, width: usize, depth: usize) {
     };
     let mut rng = rand::thread_rng();
     r.shuffle(&mut rng);
-    for bits in &r[1..=depth] {
-        let addr = 0x0001_0000 | bits;
+    for addr in &r[1..=depth] {
         match width {
-            1 => { dynasm!(f.asm ; mov [addr], al); },
-            2 => { dynasm!(f.asm ; mov [addr], ah); },
-            4 => { dynasm!(f.asm ; mov [addr], eax); },
-            8 => { dynasm!(f.asm ; mov [addr], rax); },
+            1 => { dynasm!(f.asm ; mov [*addr], al); },
+            2 => { dynasm!(f.asm ; mov [*addr], ah); },
+            4 => { dynasm!(f.asm ; mov [*addr], eax); },
+            8 => { dynasm!(f.asm ; mov [*addr], rax); },
             _ => unreachable!(),
         }
     }
@@ -160,7 +159,7 @@ fn emit_renaming_disp_bits(f: &mut PerfectFn) {
 
 /// Test 4. All permutations of displacement bits [9:3].
 fn emit_renaming_disp_bits_permute(f: &mut PerfectFn) {
-    for addr in (0x0000_0008..0x0000_03f8).step_by(8) {
+    for addr in (0x0000_0008..=0x0000_03f8).step_by(8) {
         dynasm!(f.asm
             ; mov [addr], eax ; mov ebx, [addr]
         );
@@ -199,7 +198,6 @@ fn emit_renaming_window(f: &mut PerfectFn) {
 }
 
 
-
 fn main() {
     pin_to_core(15);
 
@@ -225,8 +223,8 @@ fn main() {
     //let mut f = emit_test(emit_stlf_eligibility);
     //let mut f = emit_test(emit_stq_capacity_byte);
     //let mut f = emit_test(emit_stq_capacity_half);
-    let mut f = emit_test(emit_stq_capacity_word);
-    //let mut f = emit_test(emit_stq_capacity_quad);
+    //let mut f = emit_test(emit_stq_capacity_word);
+    let mut f = emit_test(emit_stq_capacity_quad);
     //let mut f = emit_test(emit_renaming_disp_bits);
     //let mut f = emit_test(emit_renaming_disp_bits_permute);
     //let mut f = emit_test(emit_renaming_window);
