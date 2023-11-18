@@ -107,9 +107,9 @@ fn emit_stq_capacity(f: &mut PerfectFn, width: usize, depth: usize) {
     // Generate some random non-aliasing padding stores to fill the STQ
     let mut r: Vec<i32> = match width { 
         1 => (0x0001_0001..=0x0001_0fff).collect(),
-        2 => (0x0001_0002..=0x0001_0ffe).collect(),
-        4 => (0x0001_0004..=0x0001_0ffc).collect(),
-        8 => (0x0001_0008..=0x0001_0ff8).collect(),
+        2 => (0x0001_0002..=0x0001_0ffe).step_by(2).collect(),
+        4 => (0x0001_0004..=0x0001_0ffc).step_by(4).collect(),
+        8 => (0x0001_0008..=0x0001_0ff8).step_by(8).collect(),
         _ => unreachable!(),
     };
     let mut rng = rand::thread_rng();
@@ -136,11 +136,11 @@ fn emit_stq_capacity(f: &mut PerfectFn, width: usize, depth: usize) {
 }
 
 // It seems like there can be 48 in-flight stores. 
+// After 47 padding stores, no STLF event occurs.
 fn emit_stq_capacity_byte(f: &mut PerfectFn) { emit_stq_capacity(f, 1, 47); }
 fn emit_stq_capacity_half(f: &mut PerfectFn) { emit_stq_capacity(f, 2, 47); }
 fn emit_stq_capacity_word(f: &mut PerfectFn) { emit_stq_capacity(f, 4, 47); }
 fn emit_stq_capacity_quad(f: &mut PerfectFn) { emit_stq_capacity(f, 8, 47); }
-
 
 
 /// Test 3. Memory renaming relies on displacement bits [9:3].
@@ -160,135 +160,11 @@ fn emit_renaming_disp_bits(f: &mut PerfectFn) {
 
 /// Test 4. All permutations of displacement bits [9:3].
 fn emit_renaming_disp_bits_permute(f: &mut PerfectFn) {
-    dynasm!(f.asm
-        ; mov [0x0000_0008], eax ; mov ebx, [0x0000_0008]
-        ; mov [0x0000_0010], eax ; mov ebx, [0x0000_0010]
-        ; mov [0x0000_0018], eax ; mov ebx, [0x0000_0018]
-        ; mov [0x0000_0020], eax ; mov ebx, [0x0000_0020]
-        ; mov [0x0000_0028], eax ; mov ebx, [0x0000_0028]
-        ; mov [0x0000_0030], eax ; mov ebx, [0x0000_0030]
-        ; mov [0x0000_0038], eax ; mov ebx, [0x0000_0038]
-        ; mov [0x0000_0040], eax ; mov ebx, [0x0000_0040]
-        ; mov [0x0000_0048], eax ; mov ebx, [0x0000_0048]
-        ; mov [0x0000_0050], eax ; mov ebx, [0x0000_0050]
-        ; mov [0x0000_0058], eax ; mov ebx, [0x0000_0058]
-        ; mov [0x0000_0060], eax ; mov ebx, [0x0000_0060]
-        ; mov [0x0000_0068], eax ; mov ebx, [0x0000_0068]
-        ; mov [0x0000_0070], eax ; mov ebx, [0x0000_0070]
-        ; mov [0x0000_0078], eax ; mov ebx, [0x0000_0078]
-        ; mov [0x0000_0080], eax ; mov ebx, [0x0000_0080]
-        ; mov [0x0000_0088], eax ; mov ebx, [0x0000_0088]
-        ; mov [0x0000_0090], eax ; mov ebx, [0x0000_0090]
-        ; mov [0x0000_0098], eax ; mov ebx, [0x0000_0098]
-        ; mov [0x0000_00a0], eax ; mov ebx, [0x0000_00a0]
-        ; mov [0x0000_00a8], eax ; mov ebx, [0x0000_00a8]
-        ; mov [0x0000_00b0], eax ; mov ebx, [0x0000_00b0]
-        ; mov [0x0000_00b8], eax ; mov ebx, [0x0000_00b8]
-        ; mov [0x0000_00c0], eax ; mov ebx, [0x0000_00c0]
-        ; mov [0x0000_00c8], eax ; mov ebx, [0x0000_00c8]
-        ; mov [0x0000_00d0], eax ; mov ebx, [0x0000_00d0]
-        ; mov [0x0000_00d8], eax ; mov ebx, [0x0000_00d8]
-        ; mov [0x0000_00e0], eax ; mov ebx, [0x0000_00e0]
-        ; mov [0x0000_00e8], eax ; mov ebx, [0x0000_00e8]
-        ; mov [0x0000_00f0], eax ; mov ebx, [0x0000_00f0]
-        ; mov [0x0000_00f8], eax ; mov ebx, [0x0000_00f8]
-        ; mov [0x0000_0100], eax ; mov ebx, [0x0000_0100]
-        ; mov [0x0000_0108], eax ; mov ebx, [0x0000_0108]
-        ; mov [0x0000_0110], eax ; mov ebx, [0x0000_0110]
-        ; mov [0x0000_0118], eax ; mov ebx, [0x0000_0118]
-        ; mov [0x0000_0120], eax ; mov ebx, [0x0000_0120]
-        ; mov [0x0000_0128], eax ; mov ebx, [0x0000_0128]
-        ; mov [0x0000_0130], eax ; mov ebx, [0x0000_0130]
-        ; mov [0x0000_0138], eax ; mov ebx, [0x0000_0138]
-        ; mov [0x0000_0140], eax ; mov ebx, [0x0000_0140]
-        ; mov [0x0000_0148], eax ; mov ebx, [0x0000_0148]
-        ; mov [0x0000_0150], eax ; mov ebx, [0x0000_0150]
-        ; mov [0x0000_0158], eax ; mov ebx, [0x0000_0158]
-        ; mov [0x0000_0160], eax ; mov ebx, [0x0000_0160]
-        ; mov [0x0000_0168], eax ; mov ebx, [0x0000_0168]
-        ; mov [0x0000_0170], eax ; mov ebx, [0x0000_0170]
-        ; mov [0x0000_0178], eax ; mov ebx, [0x0000_0178]
-        ; mov [0x0000_0180], eax ; mov ebx, [0x0000_0180]
-        ; mov [0x0000_0188], eax ; mov ebx, [0x0000_0188]
-        ; mov [0x0000_0190], eax ; mov ebx, [0x0000_0190]
-        ; mov [0x0000_0198], eax ; mov ebx, [0x0000_0198]
-        ; mov [0x0000_01a0], eax ; mov ebx, [0x0000_01a0]
-        ; mov [0x0000_01a8], eax ; mov ebx, [0x0000_01a8]
-        ; mov [0x0000_01b0], eax ; mov ebx, [0x0000_01b0]
-        ; mov [0x0000_01b8], eax ; mov ebx, [0x0000_01b8]
-        ; mov [0x0000_01c0], eax ; mov ebx, [0x0000_01c0]
-        ; mov [0x0000_01c8], eax ; mov ebx, [0x0000_01c8]
-        ; mov [0x0000_01d0], eax ; mov ebx, [0x0000_01d0]
-        ; mov [0x0000_01d8], eax ; mov ebx, [0x0000_01d8]
-        ; mov [0x0000_01e0], eax ; mov ebx, [0x0000_01e0]
-        ; mov [0x0000_01e8], eax ; mov ebx, [0x0000_01e8]
-        ; mov [0x0000_01f0], eax ; mov ebx, [0x0000_01f0]
-        ; mov [0x0000_01f8], eax ; mov ebx, [0x0000_01f8]
-        ; mov [0x0000_0200], eax ; mov ebx, [0x0000_0200]
-        ; mov [0x0000_0208], eax ; mov ebx, [0x0000_0208]
-        ; mov [0x0000_0210], eax ; mov ebx, [0x0000_0210]
-        ; mov [0x0000_0218], eax ; mov ebx, [0x0000_0218]
-        ; mov [0x0000_0220], eax ; mov ebx, [0x0000_0220]
-        ; mov [0x0000_0228], eax ; mov ebx, [0x0000_0228]
-        ; mov [0x0000_0230], eax ; mov ebx, [0x0000_0230]
-        ; mov [0x0000_0238], eax ; mov ebx, [0x0000_0238]
-        ; mov [0x0000_0240], eax ; mov ebx, [0x0000_0240]
-        ; mov [0x0000_0248], eax ; mov ebx, [0x0000_0248]
-        ; mov [0x0000_0250], eax ; mov ebx, [0x0000_0250]
-        ; mov [0x0000_0258], eax ; mov ebx, [0x0000_0258]
-        ; mov [0x0000_0260], eax ; mov ebx, [0x0000_0260]
-        ; mov [0x0000_0268], eax ; mov ebx, [0x0000_0268]
-        ; mov [0x0000_0270], eax ; mov ebx, [0x0000_0270]
-        ; mov [0x0000_0278], eax ; mov ebx, [0x0000_0278]
-        ; mov [0x0000_0280], eax ; mov ebx, [0x0000_0280]
-        ; mov [0x0000_0288], eax ; mov ebx, [0x0000_0288]
-        ; mov [0x0000_0290], eax ; mov ebx, [0x0000_0290]
-        ; mov [0x0000_0298], eax ; mov ebx, [0x0000_0298]
-        ; mov [0x0000_02a0], eax ; mov ebx, [0x0000_02a0]
-        ; mov [0x0000_02a8], eax ; mov ebx, [0x0000_02a8]
-        ; mov [0x0000_02b0], eax ; mov ebx, [0x0000_02b0]
-        ; mov [0x0000_02b8], eax ; mov ebx, [0x0000_02b8]
-        ; mov [0x0000_02c0], eax ; mov ebx, [0x0000_02c0]
-        ; mov [0x0000_02c8], eax ; mov ebx, [0x0000_02c8]
-        ; mov [0x0000_02d0], eax ; mov ebx, [0x0000_02d0]
-        ; mov [0x0000_02d8], eax ; mov ebx, [0x0000_02d8]
-        ; mov [0x0000_02e0], eax ; mov ebx, [0x0000_02e0]
-        ; mov [0x0000_02e8], eax ; mov ebx, [0x0000_02e8]
-        ; mov [0x0000_02f0], eax ; mov ebx, [0x0000_02f0]
-        ; mov [0x0000_02f8], eax ; mov ebx, [0x0000_02f8]
-        ; mov [0x0000_0300], eax ; mov ebx, [0x0000_0300]
-        ; mov [0x0000_0308], eax ; mov ebx, [0x0000_0308]
-        ; mov [0x0000_0310], eax ; mov ebx, [0x0000_0310]
-        ; mov [0x0000_0318], eax ; mov ebx, [0x0000_0318]
-        ; mov [0x0000_0320], eax ; mov ebx, [0x0000_0320]
-        ; mov [0x0000_0328], eax ; mov ebx, [0x0000_0328]
-        ; mov [0x0000_0330], eax ; mov ebx, [0x0000_0330]
-        ; mov [0x0000_0338], eax ; mov ebx, [0x0000_0338]
-        ; mov [0x0000_0340], eax ; mov ebx, [0x0000_0340]
-        ; mov [0x0000_0348], eax ; mov ebx, [0x0000_0348]
-        ; mov [0x0000_0350], eax ; mov ebx, [0x0000_0350]
-        ; mov [0x0000_0358], eax ; mov ebx, [0x0000_0358]
-        ; mov [0x0000_0360], eax ; mov ebx, [0x0000_0360]
-        ; mov [0x0000_0368], eax ; mov ebx, [0x0000_0368]
-        ; mov [0x0000_0370], eax ; mov ebx, [0x0000_0370]
-        ; mov [0x0000_0378], eax ; mov ebx, [0x0000_0378]
-        ; mov [0x0000_0380], eax ; mov ebx, [0x0000_0380]
-        ; mov [0x0000_0388], eax ; mov ebx, [0x0000_0388]
-        ; mov [0x0000_0390], eax ; mov ebx, [0x0000_0390]
-        ; mov [0x0000_0398], eax ; mov ebx, [0x0000_0398]
-        ; mov [0x0000_03a0], eax ; mov ebx, [0x0000_03a0]
-        ; mov [0x0000_03a8], eax ; mov ebx, [0x0000_03a8]
-        ; mov [0x0000_03b0], eax ; mov ebx, [0x0000_03b0]
-        ; mov [0x0000_03b8], eax ; mov ebx, [0x0000_03b8]
-        ; mov [0x0000_03c0], eax ; mov ebx, [0x0000_03c0]
-        ; mov [0x0000_03c8], eax ; mov ebx, [0x0000_03c8]
-        ; mov [0x0000_03d0], eax ; mov ebx, [0x0000_03d0]
-        ; mov [0x0000_03d8], eax ; mov ebx, [0x0000_03d8]
-        ; mov [0x0000_03e0], eax ; mov ebx, [0x0000_03e0]
-        ; mov [0x0000_03e8], eax ; mov ebx, [0x0000_03e8]
-        ; mov [0x0000_03f0], eax ; mov ebx, [0x0000_03f0]
-        ; mov [0x0000_03f8], eax ; mov ebx, [0x0000_03f8]
-    );
+    for addr in (0x0000_0008..0x0000_03f8).step_by(8) {
+        dynasm!(f.asm
+            ; mov [addr], eax ; mov ebx, [addr]
+        );
+    }
 }
 
 /// Test 5. Only the youngest six stores are eligible for fowarding thru
