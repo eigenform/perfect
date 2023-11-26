@@ -277,8 +277,8 @@ impl PerfectHarness {
         );
 
         let buf = harness.finalize().unwrap();
-        disas(&buf);
-        println!();
+        //disas(&buf);
+        //println!();
 
         self.harness_fn = unsafe { 
             std::mem::transmute(buf.ptr(AssemblyOffset(0)))
@@ -581,24 +581,32 @@ impl PerfectFn {
     }
 
 
-
-
+    /// Start a measurement by emitting RDPMC, then moving the result into 
+    /// some scratch register which is expected to live at least until 
+    /// the second measurement (which must be emitted with `emit_rdpmc_end`).
+    ///
+    /// NOTE: You should avoid implementing this with instructions that might 
+    /// change the state of the flags, or the state of any other register 
+    /// apart from the provided scratch register. RAX, RCX, and the scratch
+    /// register are necessarily clobbered here (unless you want to assume 
+    /// the value of RCX at some point - maybe something to think about
+    /// later if you want to measure with multiple counters). 
+    ///
     pub fn emit_rdpmc_start(&mut self, counter: i32, scratch: u8) {
         dynasm!(self.asm 
             ; lfence
             ; mov rcx, counter
-            ; xor Rq(scratch), Rq(scratch)
             ; lfence
             ; rdpmc
             ; lfence
-            ; sub Rq(scratch), rax
-            ; xor rax, rax
-            ; xor rdx, rdx
-            ; xor rcx, rcx
+            ; mov Rq(scratch), rax
             ; lfence
         );
     }
 
+    /// End the measurement by emitting RDPMC, taking the difference with a 
+    /// previous measurement held in some scratch register, and placing the
+    /// result in the given result register.
     pub fn emit_rdpmc_end(&mut self, counter: i32, scratch: u8, result: u8) {
         dynasm!(self.asm 
             ; lfence
@@ -606,7 +614,7 @@ impl PerfectFn {
             ; lfence
             ; rdpmc
             ; lfence
-            ; add Rq(result), Rq(scratch)
+            ; sub Rq(result), Rq(scratch)
             ; lfence
         );
     }
