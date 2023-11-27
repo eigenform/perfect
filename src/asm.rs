@@ -118,6 +118,7 @@ impl PerfectAsm {
         }
     }
 
+
     pub fn mprotect(&mut self, prot: ProtFlags) {
         unsafe { 
             mprotect(self.ptr as *mut std::ffi::c_void, self.len, prot)

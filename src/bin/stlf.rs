@@ -3,71 +3,10 @@ use perfect::codegen::*;
 use perfect::zen2::*;
 use std::collections::*;
 
-use itertools::*;
-
-fn emit_test(mut emitter: impl FnMut(&mut PerfectFn)) -> PerfectFn {
-    let mut f = PerfectFn::new("test");
-
-    // NOTE: I imagine that just LFENCE is sufficient for draining the 
-    // store queue, however, it doesn't necessarily change the state of 
-    // any other underlying storage that might be used for forwarding stores 
-    // or predicting memory dependences. Do a bunch of stores with the low
-    // bits set to zero, in an attempt to pollute any state that might 
-    // outlive the store queue. (this is mostly nonsense)
-
-    for _ in 0..16 {
-        dynasm!(f.asm
-            ; mov [0x0000_0000], al
-            ; mov [0x1000_0000], ah
-            ; mov [0x2000_0000], ax
-            ; mov [0x3000_0000], eax
-            ; mov [0x4000_0000], rax
-            ; sfence
-            ; mov [0x1000_0000], bl
-            ; mov [0x2000_0000], bh
-            ; mov [0x3000_0000], bx
-            ; mov [0x4000_0000], ebx
-            ; mov [0x0000_0000], rbx
-            ; sfence
-            ; mov [0x2000_0000], cl
-            ; mov [0x3000_0000], ch
-            ; mov [0x4000_0000], cx
-            ; mov [0x0000_0000], ecx
-            ; mov [0x1000_0000], rcx
-            ; sfence
-            ; mov [0x3000_0000], dl
-            ; mov [0x4000_0000], dh
-            ; mov [0x0000_0000], dx
-            ; mov [0x1000_0000], edx
-            ; mov [0x2000_0000], rdx
-            ; sfence
-        );
-    }
-
-    dynasm!(f.asm
-        ; mov rax, 0xdeadbeef
-        ; .align 4096
-        ; lfence
-    );
-
-    f.emit_rdpmc_start(1, Gpr::R15 as u8);
-
-    emitter(&mut f);
-
-    f.emit_rdpmc_end(1, Gpr::R15 as u8, Gpr::Rax as u8);
-    f.emit_ret();
-    f.commit();
-    f.disas();
-    println!();
-
-    f
-
-}
-
 /// Test 1. Bits [11:0] determine STLF eligibility. 
 /// Aliasing prevents the store from being eligible for forwarding.
-fn emit_stlf_eligibility(f: &mut PerfectFn) {
-    dynasm!(f.asm
+fn emit_stlf_eligibility(f: &mut X64Assembler) {
+    dynasm!(f
         ; mov rax, 0xdeadbeef
         ; mov [0x0001_0000], al // Store we want to forward
         ; mov [0x0001_0001], al
@@ -90,17 +29,16 @@ fn emit_stlf_eligibility(f: &mut PerfectFn) {
     );
 }
 
-
 /// Place some number of stores in-between STLF producer and consumer. 
 /// At some point, STLF events will not occur due to store queue capacity.
-fn emit_stq_capacity(f: &mut PerfectFn, width: usize, depth: usize) {
+fn emit_stq_capacity(f: &mut X64Assembler, width: usize, depth: usize) {
 
     // The store we want to forward
     match width {
-        1 => { dynasm!(f.asm ; mov [0x0001_0000], al ); },
-        2 => { dynasm!(f.asm ; mov [0x0001_0000], ah ); },
-        4 => { dynasm!(f.asm ; mov [0x0001_0000], eax ); },
-        8 => { dynasm!(f.asm ; mov [0x0001_0000], rax ); },
+        1 => { dynasm!(f ; mov [0x0001_0000], al ); },
+        2 => { dynasm!(f ; mov [0x0001_0000], ah ); },
+        4 => { dynasm!(f ; mov [0x0001_0000], eax ); },
+        8 => { dynasm!(f ; mov [0x0001_0000], rax ); },
         _ => unreachable!(),
     }
 
@@ -116,20 +54,20 @@ fn emit_stq_capacity(f: &mut PerfectFn, width: usize, depth: usize) {
     r.shuffle(&mut rng);
     for addr in &r[1..=depth] {
         match width {
-            1 => { dynasm!(f.asm ; mov [*addr], al); },
-            2 => { dynasm!(f.asm ; mov [*addr], ah); },
-            4 => { dynasm!(f.asm ; mov [*addr], eax); },
-            8 => { dynasm!(f.asm ; mov [*addr], rax); },
+            1 => { dynasm!(f ; mov [*addr], al); },
+            2 => { dynasm!(f ; mov [*addr], ah); },
+            4 => { dynasm!(f ; mov [*addr], eax); },
+            8 => { dynasm!(f ; mov [*addr], rax); },
             _ => unreachable!(),
         }
     }
 
     // Load whose result we expect to be forwarded
     match width {
-        1 => { dynasm!(f.asm ; mov bl, [0x0001_0000] ); },
-        2 => { dynasm!(f.asm ; mov bh, [0x0001_0000] ); },
-        4 => { dynasm!(f.asm ; mov ebx, [0x0001_0000] ); },
-        8 => { dynasm!(f.asm ; mov rbx, [0x0001_0000] ); },
+        1 => { dynasm!(f ; mov bl, [0x0001_0000] ); },
+        2 => { dynasm!(f ; mov bh, [0x0001_0000] ); },
+        4 => { dynasm!(f ; mov ebx, [0x0001_0000] ); },
+        8 => { dynasm!(f ; mov rbx, [0x0001_0000] ); },
         _ => unreachable!(),
     }
 }
@@ -137,16 +75,24 @@ fn emit_stq_capacity(f: &mut PerfectFn, width: usize, depth: usize) {
 // It seems like there can be 48 in-flight stores. 
 // After 47 padding stores, no STLF event occurs.
 // This matches the figure in the SOG for Family 17h. 
-fn emit_stq_capacity_byte(f: &mut PerfectFn) { emit_stq_capacity(f, 1, 47); }
-fn emit_stq_capacity_half(f: &mut PerfectFn) { emit_stq_capacity(f, 2, 47); }
-fn emit_stq_capacity_word(f: &mut PerfectFn) { emit_stq_capacity(f, 4, 47); }
-fn emit_stq_capacity_quad(f: &mut PerfectFn) { emit_stq_capacity(f, 8, 47); }
+fn emit_stq_capacity_byte(f: &mut X64Assembler) { 
+    emit_stq_capacity(f, 1, 47); 
+}
+fn emit_stq_capacity_half(f: &mut X64Assembler) { 
+    emit_stq_capacity(f, 2, 47);
+}
+fn emit_stq_capacity_word(f: &mut X64Assembler) { 
+    emit_stq_capacity(f, 4, 47);
+}
+fn emit_stq_capacity_quad(f: &mut X64Assembler) { 
+    emit_stq_capacity(f, 8, 47);
+}
 
 
 /// Test 3. Memory renaming relies on displacement bits [9:3].
 /// When other bits are set, memory renaming events never occur.
-fn emit_renaming_disp_bits(f: &mut PerfectFn) {
-    dynasm!(f.asm
+fn emit_renaming_disp_bits(f: &mut X64Assembler) {
+    dynasm!(f
         ; mov [0x0000_0008], eax ; mov ebx, [0x0000_0008]
         ; mov [0x0000_0010], eax ; mov ebx, [0x0000_0010]
         ; mov [0x0000_0020], eax ; mov ebx, [0x0000_0020]
@@ -159,9 +105,9 @@ fn emit_renaming_disp_bits(f: &mut PerfectFn) {
 }
 
 /// Test 4. All permutations of displacement bits [9:3].
-fn emit_renaming_disp_bits_permute(f: &mut PerfectFn) {
+fn emit_renaming_disp_bits_permute(f: &mut X64Assembler) {
     for addr in (0x0000_0008..=0x0000_03f8).step_by(8) {
-        dynasm!(f.asm
+        dynasm!(f
             ; mov [addr], eax ; mov ebx, [addr]
         );
     }
@@ -169,8 +115,8 @@ fn emit_renaming_disp_bits_permute(f: &mut PerfectFn) {
 
 /// Test 5. Only the youngest six stores are eligible for fowarding thru
 /// the memory file? 
-fn emit_renaming_window(f: &mut PerfectFn) {
-    dynasm!(f.asm
+fn emit_renaming_window(f: &mut X64Assembler) {
+    dynasm!(f
         ; mov rcx, 0x1000
         ; lfence
 
@@ -198,54 +144,82 @@ fn emit_renaming_window(f: &mut PerfectFn) {
     );
 }
 
+fn emit_test(mut emit_content: impl FnMut(&mut X64Assembler)) 
+    -> X64Assembler 
+{
+    let mut f = X64Assembler::new().unwrap();
+
+    // NOTE: I imagine that just LFENCE is sufficient for draining the 
+    // store queue, however, it doesn't necessarily change the state of 
+    // any other underlying storage that might be used for forwarding stores 
+    // or predicting memory dependences. Do a bunch of stores with the low
+    // bits set to zero, in an attempt to pollute any state that might 
+    // outlive the store queue. (this is mostly nonsense)
+
+    for _ in 0..16 {
+        dynasm!(f
+            ; mov [0x0000_0000], al
+            ; mov [0x1000_0000], ah
+            ; mov [0x2000_0000], ax
+            ; mov [0x3000_0000], eax
+            ; mov [0x4000_0000], rax
+            ; sfence
+            ; mov [0x1000_0000], bl
+            ; mov [0x2000_0000], bh
+            ; mov [0x3000_0000], bx
+            ; mov [0x4000_0000], ebx
+            ; mov [0x0000_0000], rbx
+            ; sfence
+            ; mov [0x2000_0000], cl
+            ; mov [0x3000_0000], ch
+            ; mov [0x4000_0000], cx
+            ; mov [0x0000_0000], ecx
+            ; mov [0x1000_0000], rcx
+            ; sfence
+            ; mov [0x3000_0000], dl
+            ; mov [0x4000_0000], dh
+            ; mov [0x0000_0000], dx
+            ; mov [0x1000_0000], edx
+            ; mov [0x2000_0000], rdx
+            ; sfence
+        );
+    }
+
+    dynasm!(f
+        ; mov rax, 0xdeadbeef
+        ; .align 4096
+        ; lfence
+    );
+
+    f.emit_rdpmc_start(1, Gpr::R15 as u8);
+    emit_content(&mut f);
+    f.emit_rdpmc_end(1, Gpr::R15 as u8, Gpr::Rax as u8);
+    f.emit_ret();
+    f.commit().unwrap();
+    f
+}
 
 fn main() {
     pin_to_core(15);
 
-    // This is just to make it easier to write simple loads and stores
-    // inside JIT'ed code. 
-    let mut arena = mmap_fixed(0, 0x8000_0000);
-    let mut rng = thread_rng();
-    let mut emap = Zen2EventMap::new();
+    // NOTE: `config.sh` changes the appropriate sysctl knob for allowing 
+    // allocations that start at virtual address 0x0. 
+    //
+    // This is just to make it easier to write simple loads and stores inside 
+    // JIT'ed code with absolute addresses that are in the very bottom part 
+    // of virtual memory. It's also nice because we can guarantee that all  
+    // other bits in those addresses are zero. 
+    //
+    // This call has an effect on the current process, but we don't care about
+    // the pointer returned by `mmap_fixed` in this case because we don't have 
+    // to pass around any references to this allocation (and it would probably
+    // be a bad idea anyway because this is a "valid" pointer to zero). 
+    let _ = mmap_fixed(0, 0x8000_0000);
 
-    // Emit harness and measure the function
+    let emap = Zen2EventMap::new();
     let mut harness = PerfectHarness::new()
         .set_dump_gpr(false)
         .emit();
-
-    let mut floor = PerfectFn::new("floor");
-    floor.emit_rdpmc_start(1, Gpr::R15 as u8);
-    floor.emit_rdpmc_end(1, Gpr::R15 as u8, Gpr::Rax as u8);
-    floor.emit_ret();
-    floor.commit();
-    floor.disas();
-    println!();
-
-    //let mut f = emit_test(emit_stlf_eligibility);
-    //let mut f = emit_test(emit_stq_capacity_byte);
-    //let mut f = emit_test(emit_stq_capacity_half);
-    //let mut f = emit_test(emit_stq_capacity_word);
-    let mut f = emit_test(emit_stq_capacity_quad);
-    //let mut f = emit_test(emit_renaming_disp_bits);
-    //let mut f = emit_test(emit_renaming_disp_bits_permute);
-    //let mut f = emit_test(emit_renaming_window);
-
-    #[repr(C, align(0x10000))]
-    pub struct Storage {
-        data: [u8; 0x1000000]
-    }
-
-    let mut storage = Box::new(Storage { data: [0; 0x1000000] });
-    //let mut storage = vec![0u8; 0x1000000].into_boxed_slice();
-    let ptr = storage.data.as_ptr();
-    println!("{:?}", ptr);
-
-    let mut events = Vec::new();
-    for e in 0x00..=0xdf {
-        for umask in [0x00, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80] {
-            events.push((e, umask));
-        }
-    }
 
     let mut events = EventSet::new();
     events.add_event_bits(0x24);
@@ -262,60 +236,37 @@ fn main() {
     events.add_event_nomask(0xb2);
     events.add_event_nomask(0xb3);
 
-    let mut floor_res = BTreeMap::new();
-    for (event, umask) in events.iter() {
-        let (results, _) = harness.measure(&mut floor, 
-            *event, *umask, 512, 0, 0
-        ).unwrap();
-        let dist = get_distribution(&results);
-        let min = *results.iter().min().unwrap() as i64;
-        let max = *results.iter().max().unwrap() as i64;
-        floor_res.insert((event, umask), (min, max, dist));
-    }
+    //let asm = emit_test(emit_stlf_eligibility);
+    //let asm = emit_test(emit_stq_capacity_byte);
+    //let asm = emit_test(emit_stq_capacity_half);
+    //let asm = emit_test(emit_stq_capacity_word);
+    let asm = emit_test(emit_stq_capacity_quad);
+    //let asm = emit_test(emit_renaming_disp_bits);
+    //let asm = emit_test(emit_renaming_disp_bits_permute);
+    //let asm = emit_test(emit_renaming_window);
 
+    let asm_reader = asm.reader();
+    let asm_tgt_buf = asm_reader.lock();
+    let asm_tgt_ptr = asm_tgt_buf.ptr(AssemblyOffset(0));
+    let asm_fn: MeasuredFn = unsafe { std::mem::transmute(asm_tgt_ptr) };
     for (event, umask) in events.iter() {
         let event_name = if let Some(desc) = emap.lookup(*event) {
             desc.name.to_string()
         } else { format!("unk_{:03x}", event) };
 
-        let (results, _) = harness.measure(&mut f, 
-            *event, *umask, 512, ptr as usize, 0
+        let (results, _) = harness.measure(
+            asm_fn, *event, *umask, 512, 0, 0
         ).unwrap();
-
 
         let dist = get_distribution(&results);
         let min = *results.iter().min().unwrap() as i64;
         let max = *results.iter().max().unwrap() as i64;
-
-        let (floor_min, floor_max, floor_dist) = floor_res.get(&(event,umask))
-            .unwrap();
-
-        if max == 0 && *floor_max == 0 { 
+        if max == 0 {
             continue;
         }
 
         println!("{:03x}:{:02x} {:032}", event, umask, event_name);
-        println!("\tfloor min={} max={} dist={:?}", floor_min,floor_max,floor_dist);
         println!("\tmin={} max={} dist={:?}", min,max,dist);
-
-        //let norm = if min == max {
-        //    if let Some((fmin,fmax,fdist)) = floor_res.get(&(event,umask)) {
-        //        Some(min - fmin)
-        //    } else { None }
-        //} else { None };
-
-        //if let Some(norm_val) = norm {
-        //    if norm_val == 0 { continue; }
-        //    println!("{:03x}:{:02x} {:032} norm={}", 
-        //             event, umask, event_name, norm_val);
-        //} else {
-        //    if min == 0 && max == 0 { continue; }
-        //    println!("{:03x}:{:02x} {:032} min={} max={}", 
-        //             event,umask,event_name,min,max);
-        //    println!("\tdist={:?}", dist);
-        //}
-
     }
-
-   
 }
+

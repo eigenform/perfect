@@ -1,3 +1,4 @@
+
 #![allow(unused_mut)]
 #![allow(unused_parens)]
 #![allow(unused_variables)]
@@ -32,6 +33,7 @@ pub use dynasmrt::{
     x64::X64Relocation
 };
 pub use crate::ir::Gpr;
+pub use crate::asm::Emitter;
 
 
 /// Pin to a particular core.
@@ -146,12 +148,24 @@ impl std::fmt::Debug for GprState {
     }
 }
 
+/// Interface to a measured function. 
+/// - RDI is the first argument
+/// - RSI is the second argument
+/// - Return value in RAX
+pub type MeasuredFn = fn(usize, usize) -> usize;
+
+/// Interface to harness emitted with [PerfectHarness].
+/// - RDI is the first argument (to the measured function)
+/// - RSI is the first argument (to the measured function)
+/// - RDX is the address of the measured function
+pub type HarnessFn = fn(usize, usize, usize) -> usize;
+
 pub struct PerfectHarness {
     /// Harness for jumping into JIT'ed code
     pub harness: Option<Assembler<X64Relocation>>,
 
     pub harness_buf: Option<ExecutableBuffer>,
-    pub harness_fn: Option<fn(usize, usize, usize) -> usize>,
+    pub harness_fn: Option<HarnessFn>,
 
     /// Saved stack pointer
     pub harness_state: Box<[u64; 16]>,
@@ -185,6 +199,16 @@ impl PerfectHarness {
 
     pub fn set_dump_gpr(mut self, x: bool) -> Self { self.dump_gpr = x; self }
 
+    /// Emit the harness. 
+    ///
+    /// Binary Interface
+    /// ================
+    ///
+    /// On entry to the measured function:
+    /// - RDI and RSI are passed thru from the harness
+    /// - R15 clobbered with the address of the measured function
+    /// - RSP set to the address of `harness_state`
+    /// - All other integer GPRs are zeroed
     pub fn emit(mut self) -> Self {
         let mut harness = self.harness.take().unwrap();
 
@@ -296,8 +320,10 @@ impl PerfectHarness {
         (event_hi << 32) | (mask_num << 8) | event_lo
     }
 
+    // FIXME: It would be nice if this were generic over `f`, but we probably
+    // cant do dynamic dispatch over [DynasmApi] ...
     pub fn measure(&mut self, 
-        f: &mut PerfectFn, 
+        measured_fn: MeasuredFn, 
         event: u16,
         mask: u8,
         iters: usize, 
@@ -310,14 +336,15 @@ impl PerfectHarness {
             return Err("harness not emitted");
         };
 
-        let reader = f.asm.reader();
-        let tgt_buf = reader.lock();
-        let tgt_ptr = tgt_buf.ptr(AssemblyOffset(0));
+        //let reader = f.asm.reader();
+        //let tgt_buf = reader.lock();
+        //let tgt_ptr = tgt_buf.ptr(AssemblyOffset(0));
         //println!("{:?}", tgt_ptr);
 
         let mut results = Vec::new();
         let mut gpr_dumps = if self.dump_gpr { Some(Vec::new()) } else { None };
 
+        // Interface to PMCs
         let cfg = Self::make_cfg(event, mask);
         let mut ctr = Builder::new()
             .kind(Event::Raw(cfg))
@@ -328,7 +355,7 @@ impl PerfectHarness {
             ctr.reset().unwrap();
             ctr.enable().unwrap();
 
-            let res = harness_func(rdi, rsi, tgt_ptr as usize);
+            let res = harness_func(rdi, rsi, measured_fn as usize);
 
             ctr.disable().unwrap();
             results.push(res);
@@ -385,6 +412,7 @@ impl PerfectHarness {
     }
 }
 
+pub type X64Assembler = Assembler<X64Relocation>;
 
 
 /// Simple wrapper around [dynasmrt::Assembler].

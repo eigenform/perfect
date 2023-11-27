@@ -45,17 +45,24 @@ impl EventSet {
             db,
         }
     }
+
+    /// Add an event with user mask bits explicitly set to zero.
     pub fn add_event_nomask(&mut self, event: u16) {
         self.set.insert((event, 0x00));
     }
+
+    /// Add an event with a particular user mask.
     pub fn add_event_mask(&mut self, event: u16, mask: u8) {
         self.set.insert((event, mask));
     }
+
+    /// Add an event with all user mask bits. 
     pub fn add_event_bits(&mut self, event: u16) {
         for mask in [0x00, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80] {
             self.set.insert((event, mask));
         }
     }
+
     pub fn clear(&mut self) {
         self.set.clear();
     }
