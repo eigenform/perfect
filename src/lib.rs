@@ -387,6 +387,11 @@ impl PerfectHarness {
 
 
 
+/// Simple wrapper around [dynasmrt::Assembler].
+///
+/// The backing allocation is effectively a [Vec] whose location and size 
+/// are variable. See [perfect::asm::PerfectAsm] for an implementation with
+/// a fixed backing location and size. 
 pub struct PerfectFn {
     pub asm: Assembler<X64Relocation>,
     pub name: &'static str,
@@ -440,8 +445,9 @@ impl PerfectFn {
             println!("{:32} off={:016x}", name, offset);
         }
     }
-
 }
+
+
 
 impl PerfectFn {
 
