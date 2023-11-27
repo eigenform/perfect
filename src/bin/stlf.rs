@@ -136,6 +136,7 @@ fn emit_stq_capacity(f: &mut PerfectFn, width: usize, depth: usize) {
 
 // It seems like there can be 48 in-flight stores. 
 // After 47 padding stores, no STLF event occurs.
+// This matches the figure in the SOG for Family 17h. 
 fn emit_stq_capacity_byte(f: &mut PerfectFn) { emit_stq_capacity(f, 1, 47); }
 fn emit_stq_capacity_half(f: &mut PerfectFn) { emit_stq_capacity(f, 2, 47); }
 fn emit_stq_capacity_word(f: &mut PerfectFn) { emit_stq_capacity(f, 4, 47); }

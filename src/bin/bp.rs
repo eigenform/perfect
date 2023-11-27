@@ -40,6 +40,7 @@ fn emit_correlated_branches(num_padding: usize) -> PerfectFn {
         ; foo:
     );
 
+    // A variable number of unconditional padding branches.
     for _ in 0..num_padding {
         dynasm!(f.asm
             ; jmp >wow
@@ -47,12 +48,10 @@ fn emit_correlated_branches(num_padding: usize) -> PerfectFn {
         );
     }
 
-    // We only care about measuring the misprediction rate for this branch. 
-    //
-    // The assumption is that, assuming we've "cleared" the state of global 
-    // history before the first branch, the first branch should not be 
-    // correlated with any other branch. The misprediction rate for the first
-    // branch should be ~50% [since the outcome is random]. 
+    // We only care about measuring the misprediction rate for this branch.
+    // After a certain number of padding branches, we expect that the machine
+    // will not be able to keep track of the correlation between this branch
+    // and the first branch.
 
     f.emit_rdpmc_start(1, Gpr::R15 as u8);
     dynasm!(f.asm

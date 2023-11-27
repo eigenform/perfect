@@ -6,6 +6,7 @@
 pub mod zen2;
 pub mod codegen;
 pub mod ir;
+pub mod asm;
 
 use perf_event::Builder;
 use perf_event::events::*;
@@ -382,9 +383,6 @@ impl PerfectHarness {
 
         Ok((results, gpr_dumps))
     }
-
-
-
 }
 
 
@@ -392,17 +390,20 @@ impl PerfectHarness {
 pub struct PerfectFn {
     pub asm: Assembler<X64Relocation>,
     pub name: &'static str,
+    pub symbols: HashMap<&'static str, usize>,
 }
 impl PerfectFn {
     pub fn new(name: &'static str) -> Self { 
         let mut asm = Assembler::<X64Relocation>::new().unwrap();
-        Self { asm , name }
+        let symbols = HashMap::new();
+        Self { asm , name, symbols }
     }
 
     pub fn commit(&mut self) {
         self.asm.commit().unwrap();
     }
 
+    /// Print disassembly for this function
     pub fn disas(&mut self) {
         println!("[*] Disassembly for PerfectFn '{}'", self.name);
         self.asm.commit().unwrap();
@@ -410,9 +411,44 @@ impl PerfectFn {
         let buf = rdr.lock();
         disas(&buf);
     }
+
+    /// Resolve the offset of a symbol
+    pub fn resolve_offset(&self, name: &str) -> Option<usize> {
+        if let Some(offset) = self.symbols.get(name) {
+            Some(*offset)
+        } else {
+            None
+        }
+    }
+
+    pub fn resolve_addr(&self, name: &str) -> Option<usize> {
+        if let Some(offset) = self.symbols.get(name) {
+            let off = *offset;
+            let reader = self.asm.reader();
+            let buf = reader.lock();
+            Some(buf.ptr(AssemblyOffset(off)) as usize)
+        } else {
+            None
+        }
+    }
+
+    /// Print all defined symbols
+    pub fn dump_symbols(&self) {
+        for (name, offset) in self.symbols.iter()
+            .sorted_by(|x,y| x.1.cmp(y.1))
+        {
+            println!("{:32} off={:016x}", name, offset);
+        }
+    }
+
 }
 
 impl PerfectFn {
+
+    pub fn annotate(&mut self, name: &'static str) {
+        let offset = self.asm.offset().0;
+        self.symbols.insert(name, offset);
+    }
 
     pub fn new_dynamic_label(&mut self) -> DynamicLabel {
         self.asm.new_dynamic_label()
