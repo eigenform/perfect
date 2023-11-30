@@ -1,28 +1,20 @@
 use perfect::*;
-use perfect::codegen::*;
-use perfect::zen2::*;
-use std::collections::*;
-
-fn random_input(rng: &mut ThreadRng) -> (usize, usize) {
-    let dir: bool = rng.gen();
-    (dir as usize, 0)
-}
 
 /// Two branches with a shared, random outcome. 
 /// Correlation not preserved after 90 taken branches?
-fn emit_correlated_branches(num_padding: usize) -> PerfectFn {
-    let mut f = PerfectFn::new("test");
+fn emit_correlated_branches(num_padding: usize) -> X64Assembler {
+    let mut f = X64Assembler::new().unwrap();
 
     // I guess this isn't really necessary, but whatever
-    for _ in 0..1024 {
-        dynasm!(f.asm
-            ; jmp >wow
-            ; wow:
-        );
-    }
+    //for _ in 0..1024 {
+    //    dynasm!(f
+    //        ; jmp >wow
+    //        ; wow:
+    //    );
+    //}
 
     // We expect RDI to be a *random* value (either 0 or 1)
-    dynasm!(f.asm
+    dynasm!(f
         ; cmp rdi, 1
     );
 
@@ -35,14 +27,14 @@ fn emit_correlated_branches(num_padding: usize) -> PerfectFn {
     // seems to be the case regardless of whether or not we insert any number 
     // of unconditional padding branches beforehand?)
 
-    dynasm!(f.asm
+    dynasm!(f
         ; je >foo
         ; foo:
     );
 
     // A variable number of unconditional padding branches.
     for _ in 0..num_padding {
-        dynasm!(f.asm
+        dynasm!(f
             ; jmp >wow
             ; wow:
         );
@@ -54,56 +46,46 @@ fn emit_correlated_branches(num_padding: usize) -> PerfectFn {
     // and the first branch.
 
     f.emit_rdpmc_start(1, Gpr::R15 as u8);
-    dynasm!(f.asm
+    dynasm!(f
         ; je >bar
         ; bar:
     );
     f.emit_rdpmc_end(1, Gpr::R15 as u8, Gpr::Rax as u8);
 
     f.emit_ret();
-    f.commit();
+    f.commit().unwrap();
     f
 }
 
-fn main() {
-    pin_to_core(15);
-
-    let mut arena = mmap_fixed(0, 0x8000_0000);
-    let mut rng = thread_rng();
-    let mut emap = Zen2EventMap::new();
-
-    // Emit harness and measure the function
-    let mut harness = PerfectHarness::new()
-        .set_dump_gpr(false)
-        .emit();
-
-    let mut events = EventSet::new();
-    events.add_event_nomask(0xc3);
+fn test_correlated_branches() {
+    let mut harness = PerfectHarness::new().emit(HarnessConfig::default());
 
     for num_padding in 0..=100 {
+        let f = emit_correlated_branches(num_padding);
+        let buf = f.finalize().unwrap();
+        let ptr = buf.ptr(AssemblyOffset(0));
+        let func: MeasuredFn = unsafe { std::mem::transmute(ptr) };
 
-        let mut f = emit_correlated_branches(num_padding);
+        // Run with random branch outcomes.
+        // Measuring mispredicted branches.
+        let results = harness.measure_vary(func,
+            0xc3, 0x00, 1024, 
+            |rng| { 
+                (rng.gen::<bool>() as usize, 0) 
+            }
+        ).unwrap();
 
-        for (event, umask) in events.iter() {
-            let event_name = if let Some(desc) = emap.lookup(*event) {
-                desc.name.to_string()
-            } else { format!("unk_{:03x}", event) };
-
-            let (results, _) = harness.measure_vary(&mut f, 
-                *event, *umask, 1024, random_input,
-            ).unwrap();
-
-
-            let dist = get_distribution(&results);
-            let min = *results.iter().min().unwrap() as i64;
-            let max = *results.iter().max().unwrap() as i64;
-
-            //println!("{:03x}:{:02x} {:032}", event, umask, event_name);
-            println!("\tpad={:03} min={} max={} dist={:?}", 
-                num_padding, min,max,dist);
-        }
+        let dist = results.get_distribution();
+        let min = results.get_min();
+        let max = results.get_max();
+        println!("pad={:03} min={} max={} dist={:?}", 
+            num_padding, min,max,dist);
 
     }
+}
 
+fn main() {
+    PerfectEnv::pin_to_core(15);
+    test_correlated_branches();
 }
 

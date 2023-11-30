@@ -1,7 +1,9 @@
 use perfect::*;
-use perfect::codegen::*;
 use perfect::zen2::*;
 use std::collections::*;
+
+use rand::prelude::*;
+
 
 /// Test 1. Bits [11:0] determine STLF eligibility. 
 /// Aliasing prevents the store from being eligible for forwarding.
@@ -105,6 +107,7 @@ fn emit_renaming_disp_bits(f: &mut X64Assembler) {
 }
 
 /// Test 4. All permutations of displacement bits [9:3].
+/// You should observe 127 memory renaming events. 
 fn emit_renaming_disp_bits_permute(f: &mut X64Assembler) {
     for addr in (0x0000_0008..=0x0000_03f8).step_by(8) {
         dynasm!(f
@@ -144,7 +147,7 @@ fn emit_renaming_window(f: &mut X64Assembler) {
     );
 }
 
-fn emit_test(mut emit_content: impl FnMut(&mut X64Assembler)) 
+fn emit_test(emit_content: impl Fn(&mut X64Assembler)) 
     -> X64Assembler 
 {
     let mut f = X64Assembler::new().unwrap();
@@ -199,8 +202,19 @@ fn emit_test(mut emit_content: impl FnMut(&mut X64Assembler))
     f
 }
 
+const TESTS: &[(&'static str, fn(&mut X64Assembler))] = &[
+    ("STLF eligibility",    emit_stlf_eligibility),
+    ("STQ capacity (byte)", emit_stq_capacity_byte),
+    ("STQ capacity (half)", emit_stq_capacity_half),
+    ("STQ capacity (word)", emit_stq_capacity_word),
+    ("STQ capacity (quad)", emit_stq_capacity_quad),
+    ("Memory renaming eligibility #1", emit_renaming_disp_bits),
+    ("Memory renaming eligibility #2", emit_renaming_disp_bits_permute),
+    ("In-flight memory renames", emit_renaming_window),
+];
+
 fn main() {
-    pin_to_core(15);
+    PerfectEnv::pin_to_core(15);
 
     // NOTE: `config.sh` changes the appropriate sysctl knob for allowing 
     // allocations that start at virtual address 0x0. 
@@ -214,12 +228,10 @@ fn main() {
     // the pointer returned by `mmap_fixed` in this case because we don't have 
     // to pass around any references to this allocation (and it would probably
     // be a bad idea anyway because this is a "valid" pointer to zero). 
-    let _ = mmap_fixed(0, 0x8000_0000);
+    let _ = PerfectEnv::mmap_fixed(0, 0x8000_0000);
 
     let emap = Zen2EventMap::new();
-    let mut harness = PerfectHarness::new()
-        .set_dump_gpr(false)
-        .emit();
+    let mut harness = PerfectHarness::new().emit(HarnessConfig::default());
 
     let mut events = EventSet::new();
     events.add_event_bits(0x24);
@@ -236,37 +248,33 @@ fn main() {
     events.add_event_nomask(0xb2);
     events.add_event_nomask(0xb3);
 
-    //let asm = emit_test(emit_stlf_eligibility);
-    //let asm = emit_test(emit_stq_capacity_byte);
-    //let asm = emit_test(emit_stq_capacity_half);
-    //let asm = emit_test(emit_stq_capacity_word);
-    let asm = emit_test(emit_stq_capacity_quad);
-    //let asm = emit_test(emit_renaming_disp_bits);
-    //let asm = emit_test(emit_renaming_disp_bits_permute);
-    //let asm = emit_test(emit_renaming_window);
+    for (desc, test_emitter) in TESTS {
+        println!("===============================================");
+        println!("[*] Running test '{}'", desc);
+        let asm = emit_test(test_emitter);
+        let asm_reader = asm.reader();
+        let asm_tgt_buf = asm_reader.lock();
+        let asm_tgt_ptr = asm_tgt_buf.ptr(AssemblyOffset(0));
+        let asm_fn: MeasuredFn = unsafe { std::mem::transmute(asm_tgt_ptr) };
+        for (event, umask) in events.iter() {
+            let event_name = if let Some(desc) = emap.lookup(*event) {
+                desc.name.to_string()
+            } else { format!("unk_{:03x}", event) };
 
-    let asm_reader = asm.reader();
-    let asm_tgt_buf = asm_reader.lock();
-    let asm_tgt_ptr = asm_tgt_buf.ptr(AssemblyOffset(0));
-    let asm_fn: MeasuredFn = unsafe { std::mem::transmute(asm_tgt_ptr) };
-    for (event, umask) in events.iter() {
-        let event_name = if let Some(desc) = emap.lookup(*event) {
-            desc.name.to_string()
-        } else { format!("unk_{:03x}", event) };
+            let results = harness.measure(
+                asm_fn, *event, *umask, 512, 0, 0
+            ).unwrap();
 
-        let (results, _) = harness.measure(
-            asm_fn, *event, *umask, 512, 0, 0
-        ).unwrap();
+            let dist = results.get_distribution();
+            let min = results.get_min();
+            let max = results.get_max();
+            if max == 0 {
+                continue;
+            }
 
-        let dist = get_distribution(&results);
-        let min = *results.iter().min().unwrap() as i64;
-        let max = *results.iter().max().unwrap() as i64;
-        if max == 0 {
-            continue;
+            println!("{:03x}:{:02x} {:032}", event, umask, event_name);
+            println!("\tmin={} max={} dist={:?}", min,max,dist);
         }
-
-        println!("{:03x}:{:02x} {:032}", event, umask, event_name);
-        println!("\tmin={} max={} dist={:?}", min,max,dist);
     }
 }
 

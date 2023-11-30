@@ -24,6 +24,12 @@ use iced_x86::{
 
 use nix::sys::mman::{ ProtFlags, MapFlags, mmap, munmap, mprotect };
 
+use crate::MeasuredFn;
+
+/// Fallback/default assembler from [dynasmrt]. 
+pub type X64Assembler = Assembler<X64Relocation>;
+
+
 /// This is supposed to mimic the behavior of [dynasmrt::Assembler], 
 /// but where the size and address of the backing memory is fixed.
 pub struct PerfectAsm {
@@ -31,8 +37,6 @@ pub struct PerfectAsm {
     pub ptr: *const u8,
     /// Size of backing allocation
     pub len: usize,
-    /// Number of bytes written to backing allocation
-    pub cursor: usize,
     /// Temporary buffer for the assembler
     pub ops: Vec<u8>,
 
@@ -72,7 +76,7 @@ impl PerfectAsm {
     fn encode_relocs(&mut self) -> Result<(), DynasmError> {
         for (loc, label) in self.relocs.take_statics() {
             let target = self.labels.resolve_static(&label)?;
-            let buf = &mut self.ops[loc.range(self.cursor)];
+            let buf = &mut self.ops[loc.range(0)];
             if loc.patch(buf, self.ptr as usize, target.0).is_err() {
                 return Err(DynasmError::ImpossibleRelocation(
                     if label.is_global() {
@@ -89,7 +93,7 @@ impl PerfectAsm {
 
         for (loc, id) in self.relocs.take_dynamics() {
             let target = self.labels.resolve_dynamic(id)?;
-            let buf = &mut self.ops[loc.range(self.cursor)];
+            let buf = &mut self.ops[loc.range(0)];
             if loc.patch(buf, self.ptr as usize, target.0).is_err() {
                 return Err(
                     DynasmError::ImpossibleRelocation(TargetKind::Dynamic(id))
@@ -109,7 +113,6 @@ impl PerfectAsm {
         Self { 
             ptr, 
             len,
-            cursor: 0,
             ops: Vec::new(),
             labels: LabelRegistry::new(),
             relocs: RelocRegistry::new(),
@@ -118,6 +121,14 @@ impl PerfectAsm {
         }
     }
 
+    pub fn cursor(&self) -> usize { self.ops.len() }
+    pub fn base_addr(&self) -> usize { self.ptr as usize }
+    pub fn max_addr(&self) -> usize { self.base_addr() + self.len }
+    pub fn cur_addr(&self) -> usize { self.base_addr() + self.cursor() }
+
+    pub fn as_fn(&self) -> MeasuredFn {
+        unsafe { std::mem::transmute(self.ptr) }
+    }
 
     pub fn mprotect(&mut self, prot: ProtFlags) {
         unsafe { 
@@ -130,18 +141,46 @@ impl PerfectAsm {
         self.labels.new_dynamic_label()
     }
 
+    pub fn pad_until(&mut self, addr: usize) {
+        if self.cur_addr() == addr { 
+            return;
+        }
+
+        println!("{:016x} {:016x}", addr, self.cur_addr());
+        assert!(addr > self.cur_addr());
+        assert!(addr <= self.max_addr());
+
+        let num_padding = addr - self.cur_addr();
+        let nop8_count = num_padding / 8;
+        let rem8 = num_padding % 8;
+        for _ in 0..nop8_count {
+            dynasm!(self ; .bytes NOP8);
+        }
+        match rem8 {
+            0 => {},
+            1 => dynasm!(self ; nop),
+            2 => dynasm!(self ; .bytes NOP2),
+            3 => dynasm!(self ; .bytes NOP3),
+            4 => dynasm!(self ; .bytes NOP4),
+            5 => dynasm!(self ; .bytes NOP5),
+            6 => dynasm!(self ; .bytes NOP6),
+            7 => dynasm!(self ; .bytes NOP7),
+            _ => unreachable!(),
+        }
+        assert_eq!(self.cur_addr(), addr);
+    }
+
     /// Write assembler to backing memory.
     pub fn commit(&mut self) -> Result<(), &str> {
-        if self.ops.len() > self.len {
+        if self.cursor() > self.len {
             return Err("Assembled code doesn't fit into backing allocation");
         }
         if let Err(e) = self.encode_relocs() {
             return Err("Failed to encode relocations");
         }
 
-        self.cursor = self.ops.len();
         let buf: &mut [u8]  = unsafe { 
-            std::slice::from_raw_parts_mut(self.ptr as *mut u8, self.cursor)
+            std::slice::from_raw_parts_mut(self.ptr as *mut u8, self.cursor())
         };
         buf.copy_from_slice(&self.ops);
         Ok(())
@@ -152,7 +191,7 @@ impl PerfectAsm {
         let ptr: *const u8 = self.ptr;
         let addr: u64   = self.ptr as u64;
         let buf: &[u8]  = unsafe { 
-            std::slice::from_raw_parts(ptr, self.cursor)
+            std::slice::from_raw_parts(ptr, self.cursor())
         };
 
         let mut decoder = Decoder::with_ip(64, buf, addr, DecoderOptions::NONE);
@@ -318,7 +357,9 @@ impl DynasmLabelApi for PerfectAsm {
     {
         let location = self.offset();
         let loc = PatchLoc::new(location, 0, field_offset, ref_offset, kind);
-        let buf = &mut self.ops[loc.range(self.cursor)];
+        //let cursor = self.ops.len();
+        //let buf = &mut self.ops[loc.range(cursor)];
+        let buf = &mut self.ops[loc.range(0)];
         if loc.patch(buf, self.ptr as usize, target).is_err() {
             self.error = Some(
                 DynasmError::ImpossibleRelocation(TargetKind::Extern(target))
@@ -506,6 +547,7 @@ pub trait Emitter: DynasmLabelApi<Relocation=X64Relocation> {
     /// the value of RCX at some point - maybe something to think about
     /// later if you want to measure with multiple counters). 
     ///
+    /// NOTE: This block of code is 0x18 bytes. 
     fn emit_rdpmc_start(&mut self, counter: i32, scratch: u8) {
         dynasm!(self 
             ; lfence
@@ -534,6 +576,71 @@ pub trait Emitter: DynasmLabelApi<Relocation=X64Relocation> {
     }
 }
 
-impl Emitter for Assembler<X64Relocation> {}
+// Implement [Emitter] for all of the JIT assemblers we care about
+impl Emitter for X64Assembler {}
 impl Emitter for PerfectAsm {}
+
+
+// ==========================================================================
+
+
+// Various flavors of NOP encoding [see the Family 17h SOG]
+pub const NOP2:  [u8; 2] = [ 0x66, 0x90 ];
+pub const NOP3:  [u8; 3] = [ 0x0f, 0x1f, 0x00 ];
+pub const NOP4:  [u8; 4] = [ 0x0f, 0x1f, 0x40, 0x00 ];
+pub const NOP5:  [u8; 5] = [ 0x0f, 0x1f, 0x44, 0x00, 0x00 ];
+pub const NOP6:  [u8; 6] = [ 0x66, 0x0f, 0x1f, 0x44, 0x00, 0x00 ];
+pub const NOP7:  [u8; 7] = [ 0x0f, 0x1f, 0x80, 0x00, 0x00, 0x00, 0x00 ];
+pub const NOP8:  [u8; 8] = [ 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00 ];
+pub const NOP9:  [u8; 9] = [ 
+    0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00 
+];
+pub const NOP15: [u8; 15] = [ 
+    0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 
+    0x0F, 0x1F, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00
+];
+
+#[repr(u8)]
+#[derive(Clone, Copy)]
+pub enum Gpr {
+    Rax = 0,
+    Rcx = 1,
+    Rdx = 2,
+    Rbx = 3,
+    Rsp = 4,
+    Rbp = 5,
+    Rsi = 6,
+    Rdi = 7,
+    R8  = 8,
+    R9  = 9,
+    R10 = 10,
+    R11 = 11,
+    R12 = 12,
+    R13 = 13,
+    R14 = 14,
+    R15 = 15,
+}
+impl From<u8> for Gpr {
+    fn from(x: u8) -> Self {
+        match x {
+            0 => Self::Rax,
+            1 => Self::Rcx,
+            2 => Self::Rdx,
+            3 => Self::Rbx,
+            4 => Self::Rsp,
+            5 => Self::Rbp,
+            6 => Self::Rsi,
+            7 => Self::Rdi,
+            8 => Self::R8,
+            9 => Self::R9,
+            10 => Self::R10,
+            11 => Self::R11,
+            12 => Self::R12,
+            13 => Self::R13,
+            14 => Self::R14,
+            15 => Self::R15,
+            _ => unreachable!(),
+        }
+    }
+}
 
