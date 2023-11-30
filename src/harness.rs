@@ -1,8 +1,10 @@
 
 use std::collections::*;
+use std::os::fd::{ AsRawFd, FromRawFd };
 use rand::rngs::ThreadRng;
-use perf_event::Builder;
+use perf_event::{ Builder, Group };
 use perf_event::events::*;
+use perf_event::hooks::sys::bindings::perf_event_mmap_page;
 use dynasmrt::{
     dynasm, 
     DynasmApi, 
@@ -121,6 +123,17 @@ impl MeasureResults {
         }
         dist
     }
+
+    pub fn find(&self, val: usize) -> Vec<usize> {
+        self.data.iter().enumerate().filter(|(idx, x)| **x == val)
+            .map(|(idx, x)| idx).collect()
+    }
+    pub fn filter(&self, mut f: impl FnMut(usize) -> bool) -> Vec<usize> {
+        self.data.iter().enumerate().filter(|(idx, x)| f(**x))
+            .map(|(idx, x)| idx).collect()
+    }
+
+
 }
 
 
@@ -405,12 +418,28 @@ impl PerfectHarness {
             .kind(Event::Raw(ctx.cfg))
             .build().unwrap();
 
+        // Get the index of the actual hardware counter
+        //let file = unsafe { 
+        //    std::fs::File::from_raw_fd(ctr.as_raw_fd())
+        //};
+        //let mmap = unsafe { 
+        //    memmap2::MmapOptions::new()
+        //        .len(std::mem::size_of::<perf_event_mmap_page>())
+        //        .map(&file)
+        //        .unwrap()
+        //};
+        //let mmap_page = unsafe { 
+        //    &*(mmap.as_ptr() as *const perf_event_mmap_page)
+        //};
+        //let index = mmap_page.index;
+        //println!("{}", index);
+
         for i in 0..iters {
             self.gpr_state.clear();
-            ctr.reset().unwrap();
             ctr.enable().unwrap();
             let res = harness_fn(rdi, rsi, measured_fn as usize);
             ctr.disable().unwrap();
+            //ctr.reset().unwrap();
             ctx.results.push(res);
             if let Some(ref mut dumps) = ctx.gpr_dumps {
                 dumps.push(*self.gpr_state);

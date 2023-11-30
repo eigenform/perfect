@@ -574,6 +574,37 @@ pub trait Emitter: DynasmLabelApi<Relocation=X64Relocation> {
             ; lfence
         );
     }
+
+    fn emit_rdpmc_start64(&mut self, counter: i32, scratch: u8) {
+        dynasm!(self
+            ; lfence
+            ; mov rcx, counter
+            ; lfence
+            ; rdpmc
+            ; lfence
+            ; shl rdx, 32
+            ; or rax, rdx
+            ; mov Rq(scratch), rax
+            ; lfence
+        )
+    }
+    fn emit_rdpmc_end64(&mut self, counter: i32, scratch: u8, result: u8) {
+        dynasm!(self 
+            ; lfence
+            ; mov rcx, counter
+            ; lfence
+            ; rdpmc
+            ; lfence
+            ; shl rdx, 32
+            ; or rax, rdx
+            ; sub rax, Rq(scratch)
+            ; mov Rq(result), rax
+            ; lfence
+        );
+    }
+
+
+
 }
 
 // Implement [Emitter] for all of the JIT assemblers we care about
