@@ -141,20 +141,29 @@ impl PerfectAsm {
         self.labels.new_dynamic_label()
     }
 
-    pub fn pad_until(&mut self, addr: usize) {
+    /// Pad with NOP until the requested address. 
+    /// Returns the number of emitted bytes. 
+    pub fn pad_until(&mut self, addr: usize) -> usize {
         if self.cur_addr() == addr { 
-            return;
+            return 0;
         }
 
-        println!("{:016x} {:016x}", addr, self.cur_addr());
-        assert!(addr > self.cur_addr());
-        assert!(addr <= self.max_addr());
+        assert!(addr > self.cur_addr(),
+            "Requested pad target {:016x} must be > {:016x}",
+            addr, self.cur_addr(),
+        );
+        assert!(addr <= self.max_addr(),
+            "Requested {:016x} must be >= max addr {:016x}",
+            addr, self.max_addr(),
+        );
 
+        let mut count = 0;
         let num_padding = addr - self.cur_addr();
         let nop8_count = num_padding / 8;
         let rem8 = num_padding % 8;
         for _ in 0..nop8_count {
             dynasm!(self ; .bytes NOP8);
+            count += 8;
         }
         match rem8 {
             0 => {},
@@ -167,7 +176,9 @@ impl PerfectAsm {
             7 => dynasm!(self ; .bytes NOP7),
             _ => unreachable!(),
         }
+        count += rem8;
         assert_eq!(self.cur_addr(), addr);
+        return count;
     }
 
     /// Write assembler to backing memory.

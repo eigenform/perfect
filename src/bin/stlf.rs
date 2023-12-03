@@ -194,9 +194,9 @@ fn emit_test(emit_content: impl Fn(&mut X64Assembler))
         ; lfence
     );
 
-    f.emit_rdpmc_start(1, Gpr::R15 as u8);
+    f.emit_rdpmc_start(0, Gpr::R15 as u8);
     emit_content(&mut f);
-    f.emit_rdpmc_end(1, Gpr::R15 as u8, Gpr::Rax as u8);
+    f.emit_rdpmc_end(0, Gpr::R15 as u8, Gpr::Rax as u8);
     f.emit_ret();
     f.commit().unwrap();
     f
@@ -231,7 +231,7 @@ fn main() {
     let _ = PerfectEnv::mmap_fixed(0, 0x8000_0000);
 
     let emap = Zen2EventMap::new();
-    let mut harness = PerfectHarness::new().emit(HarnessConfig::default());
+    let mut harness = HarnessConfig::default().emit();
 
     let mut events = EventSet::new();
     events.add_event_bits(0x24);

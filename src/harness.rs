@@ -2,7 +2,7 @@
 use std::collections::*;
 use std::os::fd::{ AsRawFd, FromRawFd };
 use rand::rngs::ThreadRng;
-use perf_event::{ Builder, Group };
+use perf_event::{ Builder, Group, Counter };
 use perf_event::events::*;
 use perf_event::hooks::sys::bindings::perf_event_mmap_page;
 use dynasmrt::{
@@ -13,6 +13,7 @@ use dynasmrt::{
     ExecutableBuffer, 
     x64::X64Relocation
 };
+use crate::util;
 
 /// Type of a function eligible for measurement via [PerfectHarness]. 
 pub type MeasuredFn = fn(usize, usize) -> usize;
@@ -24,9 +25,18 @@ pub type HarnessFn = fn(rdi: usize, rsi: usize, measured_fn: usize) -> usize;
 /// input to a measured function. 
 ///
 /// [PerfectHarness::measure_vary] expects a type like this for varying the
-/// inputs on each iteration of a test. 
-pub trait InputGenerator: Fn(&mut ThreadRng) -> (usize, usize) {}
-impl <F: Fn(&mut ThreadRng) -> (usize, usize)> InputGenerator for F {}
+/// inputs on each iteration of a test. Returns a tuple `(usize, usize)` with
+/// values passed to the measured function via RDI and RSI.
+///
+/// The arguments to this function are:
+///
+/// - A mutable reference to the harness [ThreadRng]
+/// - The current iteration/test index
+///
+pub trait InputGenerator: 
+    Fn(&mut ThreadRng, usize) -> (usize, usize) {}
+impl <F: Fn(&mut ThreadRng, usize) -> (usize, usize)> 
+    InputGenerator for F {}
 
 
 /// Harness stack layout. 
@@ -140,6 +150,7 @@ impl MeasureResults {
 
 
 /// Configuration passed to [PerfectHarness::emit]. 
+#[derive(Clone, Copy)]
 pub struct HarnessConfig {
     dump_gpr: bool,
     cmp_rdi: Option<i32>,
@@ -165,6 +176,14 @@ impl HarnessConfig {
         self
     }
 }
+impl HarnessConfig {
+    /// Create and emit a [PerfectHarness] using this configuration.
+    pub fn emit(self) -> PerfectHarness {
+        let mut res = PerfectHarness::new(self);
+        res
+    }
+}
+
 
 /// Harness used to configure PMCs and call into measured code. 
 ///
@@ -184,10 +203,8 @@ impl HarnessConfig {
 ///
 pub struct PerfectHarness {
 
-    // The assembler for emitting the harness. 
-    // After code generation, backing allocation lives in 'harness_buf'. 
-    //
-    harness: Option<Assembler<X64Relocation>>,
+    // Backing allocation with emitted code implementing the harness.
+    // Created after [PerfectHarness::emit] is called.
     harness_buf: Option<ExecutableBuffer>,
     harness_fn: Option<HarnessFn>,
 
@@ -200,49 +217,29 @@ pub struct PerfectHarness {
     /// Scratchpad memory for saving GPR state when JIT'ed code exits.
     pub gpr_state: Box<GprState>,
 
-    cfg: Option<HarnessConfig>,
-
-    /// Toggleable: dump GPRs after return from measured code.
-    dump_gpr: bool,
-
-    /// Toggleable: prepare flags *before* calling measured code by comparing
-    /// the value in RDI to the requested value. 
-    cmp_rdi: Option<i32>,
-
+    cfg: HarnessConfig,
     rng: ThreadRng,
 }
 
 impl PerfectHarness {
-    pub fn new() -> Self { 
-        let mut harness = Assembler::<X64Relocation>::new().unwrap();
+    pub fn new(cfg: HarnessConfig) -> Self { 
+        //let mut harness = Assembler::<X64Relocation>::new().unwrap();
         let mut harness_state = Box::new([0; 16]);
         let mut harness_stack = Box::new(HarnessStack::new());
         let mut gpr_state = Box::new(GprState::new());
 
-        Self { 
-            harness: Some(harness),
+        let mut res = Self { 
+            //harness: Some(harness),
             harness_buf: None,
             harness_fn: None,
-            cfg: None,
-            dump_gpr: false,
-            cmp_rdi: None,
+            cfg,
             rng: rand::thread_rng(),
             harness_state: Box::new([0; 16]),
             harness_stack: Box::new(HarnessStack::new()),
             gpr_state: Box::new(GprState::new()),
-        }
-    }
-
-    pub fn set_dump_gpr(mut self, x: bool) -> Self { 
-        assert!(self.harness_fn.is_none());
-        self.dump_gpr = x; 
-        self
-    }
-
-    pub fn set_cmp_rdi(mut self, val: i32) -> Self { 
-        assert!(self.harness_fn.is_none());
-        self.cmp_rdi = Some(val);
-        self
+        };
+        res.emit();
+        res
     }
 
     /// Emit the harness. 
@@ -255,8 +252,9 @@ impl PerfectHarness {
     /// - R15 clobbered with the address of the measured function
     /// - RSP set to the address of `harness_state`
     /// - All other integer GPRs are zeroed
-    pub fn emit(mut self, cfg: HarnessConfig) -> Self {
-        let mut harness = self.harness.take().unwrap();
+    fn emit(&mut self) {
+        //let mut harness = self.harness.take().unwrap();
+        let mut harness = Assembler::<X64Relocation>::new().unwrap();
 
         dynasm!(harness
             ; .arch     x64
@@ -304,7 +302,7 @@ impl PerfectHarness {
 
         // Optionally use RDI to prepare the initial state of the flags
         // before entering measured code. 
-        if let Some(val) = cfg.cmp_rdi {
+        if let Some(val) = self.cfg.cmp_rdi {
             dynasm!(harness
                 ; cmp rdi, val
             );
@@ -317,7 +315,7 @@ impl PerfectHarness {
         );
 
         // Optionally capture the GPRs after exiting measured code. 
-        if cfg.dump_gpr {
+        if self.cfg.dump_gpr {
             dynasm!(harness
                 ; mov r15, QWORD self.gpr_state.0.as_ptr() as _
                 ; mov [r15 + 0x00], rax
@@ -356,18 +354,37 @@ impl PerfectHarness {
             ; ret
         );
 
-        self.cfg = Some(cfg);
-        let buf = harness.finalize().unwrap();
-        self.harness_fn = unsafe { 
-            std::mem::transmute(buf.ptr(AssemblyOffset(0)))
+        let harness_buf = harness.finalize().unwrap();
+        let harness_fn: HarnessFn = unsafe { 
+            std::mem::transmute(harness_buf.ptr(AssemblyOffset(0)))
         };
-        self.harness_buf = Some(buf);
-        self
+        self.harness_buf = Some(harness_buf);
+        self.harness_fn  = Some(harness_fn);
     }
 }
 
 
 impl PerfectHarness {
+
+    /// Resolve the actual index of the hardware counter being used by 'perf'.
+    unsafe fn resolve_hw_pmc_idx(ctr: &Counter) -> usize {
+        let file = unsafe { 
+            std::fs::File::from_raw_fd(ctr.as_raw_fd())
+        };
+        let mmap = unsafe { 
+            memmap2::MmapOptions::new()
+                .len(std::mem::size_of::<perf_event_mmap_page>())
+                .map(&file)
+                .unwrap()
+        };
+        let mmap_page = unsafe { 
+            &*(mmap.as_ptr() as *const perf_event_mmap_page)
+        };
+        let index = mmap_page.index;
+        index as usize
+    }
+
+
     /// Generate the config bits for the raw perf_event. 
     fn make_cfg(event: u16, mask: u8) -> u64 {
         let event_num = event as u64 & 0b1111_1111_1111;
@@ -377,13 +394,18 @@ impl PerfectHarness {
         (event_hi << 32) | (mask_num << 8) | event_lo
     }
 
+    // NOTE: This *assumes* the user has called [PerfectHarness::emit].
     fn setup_measure_context(&mut self, event: u16, mask: u8, 
         input_strategy: InputStrategy) 
         -> MeasureContext
     {
         let this_cpu = nix::sched::sched_getcpu().unwrap();
         let mut results = Vec::new();
-        let mut gpr_dumps = if self.dump_gpr { Some(Vec::new()) } else { None };
+        let mut gpr_dumps = if self.cfg.dump_gpr { 
+            Some(Vec::new()) 
+        } else { 
+            None 
+        };
         let cfg = Self::make_cfg(event, mask);
         MeasureContext {
             results,
@@ -396,7 +418,9 @@ impl PerfectHarness {
             inputs: Vec::new(),
         }
     }
+}
 
+impl PerfectHarness {
     pub fn measure(&mut self, 
         measured_fn: MeasuredFn, 
         event: u16,
@@ -410,36 +434,17 @@ impl PerfectHarness {
             event, mask, InputStrategy::Fixed((rdi, rsi))
         );
 
-        let harness_fn = if let Some(f) = self.harness_fn { f } 
-        else { 
-            return Err("harness not emitted");
-        };
+        let harness_fn = self.harness_fn.unwrap();
         let mut ctr = Builder::new()
             .kind(Event::Raw(ctx.cfg))
             .build().unwrap();
-
-        // Get the index of the actual hardware counter
-        //let file = unsafe { 
-        //    std::fs::File::from_raw_fd(ctr.as_raw_fd())
-        //};
-        //let mmap = unsafe { 
-        //    memmap2::MmapOptions::new()
-        //        .len(std::mem::size_of::<perf_event_mmap_page>())
-        //        .map(&file)
-        //        .unwrap()
-        //};
-        //let mmap_page = unsafe { 
-        //    &*(mmap.as_ptr() as *const perf_event_mmap_page)
-        //};
-        //let index = mmap_page.index;
-        //println!("{}", index);
 
         for i in 0..iters {
             self.gpr_state.clear();
             ctr.enable().unwrap();
             let res = harness_fn(rdi, rsi, measured_fn as usize);
             ctr.disable().unwrap();
-            //ctr.reset().unwrap();
+            ctr.reset().unwrap();
             ctx.results.push(res);
             if let Some(ref mut dumps) = ctx.gpr_dumps {
                 dumps.push(*self.gpr_state);
@@ -460,10 +465,7 @@ impl PerfectHarness {
         input_fn: impl InputGenerator + Copy + 'static,
     ) -> Result<MeasureResults, &str>
     {
-        let harness_fn = if let Some(f) = self.harness_fn { f } 
-        else { 
-            return Err("harness not emitted");
-        };
+        let harness_fn = self.harness_fn.unwrap();
         let mut ctx = self.setup_measure_context(
             event, mask, InputStrategy::Variable(Box::new(input_fn)),
         );
@@ -472,7 +474,7 @@ impl PerfectHarness {
             .build().unwrap();
 
         for i in 0..iters {
-            let (rdi, rsi) = input_fn(&mut self.rng);
+            let (rdi, rsi) = input_fn(&mut self.rng, i);
             ctx.inputs.push((rdi, rsi));
 
             self.gpr_state.clear();

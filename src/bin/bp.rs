@@ -45,12 +45,12 @@ fn emit_correlated_branches(num_padding: usize) -> X64Assembler {
     // will not be able to keep track of the correlation between this branch
     // and the first branch.
 
-    f.emit_rdpmc_start(1, Gpr::R15 as u8);
+    f.emit_rdpmc_start(0, Gpr::R15 as u8);
     dynasm!(f
         ; je >bar
         ; bar:
     );
-    f.emit_rdpmc_end(1, Gpr::R15 as u8, Gpr::Rax as u8);
+    f.emit_rdpmc_end(0, Gpr::R15 as u8, Gpr::Rax as u8);
 
     f.emit_ret();
     f.commit().unwrap();
@@ -58,7 +58,7 @@ fn emit_correlated_branches(num_padding: usize) -> X64Assembler {
 }
 
 fn test_correlated_branches() {
-    let mut harness = PerfectHarness::new().emit(HarnessConfig::default());
+    let mut harness = HarnessConfig::default().emit();
 
     for num_padding in 0..=100 {
         let f = emit_correlated_branches(num_padding);
@@ -70,9 +70,7 @@ fn test_correlated_branches() {
         // Measuring mispredicted branches.
         let results = harness.measure_vary(func,
             0xc3, 0x00, 1024, 
-            |rng| { 
-                (rng.gen::<bool>() as usize, 0) 
-            }
+            |rng, iters| { (rng.gen::<bool>() as usize, 0) }
         ).unwrap();
 
         let dist = results.get_distribution();
