@@ -257,7 +257,7 @@ fn main() {
         let asm_tgt_ptr = asm_tgt_buf.ptr(AssemblyOffset(0));
         let asm_fn: MeasuredFn = unsafe { std::mem::transmute(asm_tgt_ptr) };
         for (event, umask) in events.iter() {
-            let event_name = if let Some(desc) = emap.lookup(*event) {
+            let event_name = if let Some(desc) = emap.get_by_event(*event) {
                 desc.name.to_string()
             } else { format!("unk_{:03x}", event) };
 

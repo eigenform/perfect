@@ -76,19 +76,26 @@ impl EventSet {
 
 pub struct Zen2EventMap {
     by_event: BTreeMap<u16, PMCEvent>,
+    by_name: BTreeMap<&'static str, PMCEvent>,
 }
 impl Zen2EventMap {
     pub fn new() -> Self {
         let mut by_event = BTreeMap::new();
+        let mut by_name = BTreeMap::new();
         for event in ZEN2_EVENTS {
             by_event.insert(event.id, *event);
+            by_name.insert(event.name, *event);
         }
         Self {
             by_event,
+            by_name,
         }
     }
-    pub fn lookup(&self, event: u16) -> Option<&PMCEvent> {
+    pub fn get_by_event(&self, event: u16) -> Option<&PMCEvent> {
         self.by_event.get(&event)
+    }
+    pub fn get_by_name(&self, name: &'static str) -> Option<&PMCEvent> {
+        self.by_name.get(name)
     }
 
 }
@@ -246,7 +253,7 @@ pub const ZEN2_EVENTS: &[PMCEvent] = &[
         mask: &[
         ],
     },
-    PMCEvent { id: 0x08d, name: "BpL0BTBHit?", unit: Unit::None, 
+    PMCEvent { id: 0x08d, name: "BpL0BTBHit", unit: Unit::None, 
         has_umask: true,
         mask: &[
         ],
@@ -530,6 +537,18 @@ pub const ZEN2_EVENTS: &[PMCEvent] = &[
 
 
     PMCEvent { id: 0x1c3, name: "unk_1c3", unit: Unit::None, 
+        has_umask: false,
+        mask: &[
+        ],
+    },
+
+    // NOTE: Are these actually valid on Zen2?
+    PMCEvent { id: 0x1c7, name: "ExRetMsprdBrnchInstrDirMsmtch", unit: Unit::None, 
+        has_umask: false,
+        mask: &[
+        ],
+    },
+    PMCEvent { id: 0x1c8, name: "Bp1RetBrUncondMisp", unit: Unit::None, 
         has_umask: false,
         mask: &[
         ],
