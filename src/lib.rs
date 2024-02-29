@@ -2,11 +2,13 @@
 #![allow(unused_mut)]
 #![allow(unused_parens)]
 #![allow(unused_variables)]
+#![allow(unused_imports)]
 #![allow(dead_code)]
 
 pub mod zen2;
 pub mod asm;
 pub mod harness;
+pub mod experiments;
 pub mod util;
 
 pub use crate::asm::*;

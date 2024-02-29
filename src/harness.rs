@@ -15,6 +15,7 @@ use dynasmrt::{
     x64::X64Relocation
 };
 use crate::util;
+use crate::asm::{ X64Assembler, Emitter };
 
 /// Type of a function eligible for measurement via [PerfectHarness].
 pub type MeasuredFn = fn(usize, usize) -> usize;
@@ -142,6 +143,10 @@ impl MeasureResults {
         dist
     }
 
+    pub fn count(&self, val: usize) -> usize { 
+        self.data.iter().filter(|x| **x == val).count()
+    }
+
     pub fn find(&self, val: usize) -> Vec<usize> {
         self.data.iter().enumerate().filter(|(idx, x)| **x == val)
             .map(|(idx, x)| idx).collect()
@@ -258,6 +263,12 @@ impl PerfectHarness {
         res
     }
 
+    pub fn disas(&self) {
+        if let Some(buf) = &self.harness_buf {
+            crate::util::disas(&buf);
+        }
+    }
+
     /// Emit the harness.
     ///
     /// Binary Interface
@@ -270,7 +281,7 @@ impl PerfectHarness {
     /// - All other integer GPRs are zeroed
     fn emit(&mut self) {
         //let mut harness = self.harness.take().unwrap();
-        let mut harness = Assembler::<X64Relocation>::new().unwrap();
+        let mut harness = X64Assembler::new().unwrap();
 
         dynasm!(harness
             ; .arch     x64
@@ -316,16 +327,21 @@ impl PerfectHarness {
             //; xor r15, r15
         );
 
+        // Optionally attempt to flush the BTB with some number of 
+        // unconditional branches.
         if let Some(num) = self.cfg.flush_btb {
+            dynasm!(harness
+                ; cmp rax, 1
+            );
+
             for _ in 0..num {
+                let lab = harness.new_dynamic_label();
                 dynasm!(harness
-                    ; jmp BYTE >wow
-                    ; wow:
+                    ; je BYTE >lab
+                    ; lab:
                 );
             }
         }
-
-
 
         // Optionally use RDI to prepare the initial state of the flags
         // before entering measured code.
@@ -447,7 +463,7 @@ impl PerfectHarness {
 
 impl PerfectHarness {
 
-    pub fn generic_measure(&mut self,
+    pub fn measure(&mut self,
         measured_fn: MeasuredFn,
         event: u16,
         mask: u8,
@@ -478,21 +494,23 @@ impl PerfectHarness {
         }
 
         let harness_fn = self.harness_fn.unwrap();
+        let mut results = vec![0; iters];
         let mut ctx = self.setup_measure_context(event, mask);
         let mut ctr = Builder::new()
             .kind(Event::Raw(ctx.cfg))
             .build().unwrap();
 
+        ctr.reset().unwrap();
+        ctr.enable().unwrap();
+
         for i in 0..iters {
             let (rdi, rsi) = inputs[i];
-            ctr.reset().unwrap();
-            ctr.enable().unwrap();
             let res = harness_fn(rdi, rsi, measured_fn as usize);
-            ctr.disable().unwrap();
-            ctx.results.push(res);
+            results[i] = res;
         }
+        ctr.disable().unwrap();
         Ok(MeasureResults {
-            data: ctx.results,
+            data: results,
             event,
             mask,
             gpr_dumps: ctx.gpr_dumps,
@@ -500,77 +518,6 @@ impl PerfectHarness {
         })
     }
 
-    pub fn measure(&mut self,
-        measured_fn: MeasuredFn,
-        event: u16,
-        mask: u8,
-        iters: usize,
-        rdi: usize,
-        rsi: usize
-    ) -> Result<MeasureResults, &str>
-    {
-        let mut ctx = self.setup_measure_context(event, mask);
-
-        let harness_fn = self.harness_fn.unwrap();
-        let mut ctr = Builder::new()
-            .kind(Event::Raw(ctx.cfg))
-            .build().unwrap();
-
-        for i in 0..iters {
-            self.gpr_state.clear();
-            ctr.enable().unwrap();
-            let res = harness_fn(rdi, rsi, measured_fn as usize);
-            ctr.disable().unwrap();
-            ctr.reset().unwrap();
-            ctx.results.push(res);
-            if let Some(ref mut dumps) = ctx.gpr_dumps {
-                dumps.push(*self.gpr_state);
-            }
-        }
-
-        Ok(MeasureResults {
-            data: ctx.results,
-            event, mask,
-            gpr_dumps: ctx.gpr_dumps,
-            inputs: None,
-        })
-    }
-
-    pub fn measure_vary(&mut self,
-        measured_fn: MeasuredFn,
-        event: u16, mask: u8, iters: usize,
-        input_fn: impl InputGenerator + Copy + 'static,
-    ) -> Result<MeasureResults, &str>
-    {
-        let harness_fn = self.harness_fn.unwrap();
-        let mut ctx = self.setup_measure_context(event, mask);
-        let mut ctr = Builder::new()
-            .kind(Event::Raw(ctx.cfg))
-            .build().unwrap();
-
-        for i in 0..iters {
-            let (rdi, rsi) = input_fn(&mut self.rng, i);
-            ctx.inputs.push((rdi, rsi));
-
-            self.gpr_state.clear();
-            ctr.reset().unwrap();
-            ctr.enable().unwrap();
-            let res = harness_fn(rdi, rsi, measured_fn as usize);
-            ctr.disable().unwrap();
-            ctx.results.push(res);
-            if let Some(ref mut dumps) = ctx.gpr_dumps {
-                dumps.push(*self.gpr_state);
-            }
-        }
-
-        Ok(MeasureResults {
-            data: ctx.results,
-            event,
-            mask,
-            gpr_dumps: ctx.gpr_dumps,
-            inputs: Some(ctx.inputs),
-        })
-    }
 }
 
 

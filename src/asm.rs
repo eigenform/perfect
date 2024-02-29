@@ -153,7 +153,7 @@ impl PerfectAsm {
             addr, self.cur_addr(),
         );
         assert!(addr <= self.max_addr(),
-            "Requested {:016x} must be >= max addr {:016x}",
+            "Requested {:016x} must be <= max addr {:016x}",
             addr, self.max_addr(),
         );
 
@@ -529,6 +529,7 @@ pub trait Emitter: DynasmLabelApi<Relocation=X64Relocation> {
             ; lfence
             ; rdtsc
             ; lfence
+            ; xor Rq(scratch), Rq(scratch)
             ; sub Rq(scratch), rax
             ; xor rax, rax
             ; xor rdx, rdx

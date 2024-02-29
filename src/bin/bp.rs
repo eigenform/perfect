@@ -68,9 +68,11 @@ fn test_correlated_branches() {
 
         // Run with random branch outcomes.
         // Measuring mispredicted branches.
-        let results = harness.measure_vary(func,
+        let results = harness.measure(func,
             0xc3, 0x00, 1024, 
-            |rng, iters| { (rng.gen::<bool>() as usize, 0) }
+            InputMethod::Random(&|rng, iters| { 
+                (rng.gen::<bool>() as usize, 0) 
+            }),
         ).unwrap();
 
         let dist = results.get_distribution();

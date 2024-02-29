@@ -12,6 +12,8 @@ dynasmrt = "*"
 rand = "0.8.5"
 itertools = "0.11.0"
 memmap2 = "0.9.0"
+bitvec = "1.0.1"
+num = { version = "0.4.0", features = ["num-bigint"] }
 
 [dependencies.iced-x86]
 version = "*"

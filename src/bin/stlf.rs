@@ -194,9 +194,9 @@ fn emit_test(emit_content: impl Fn(&mut X64Assembler))
         ; lfence
     );
 
-    f.emit_rdpmc_start(0, Gpr::R15 as u8);
+    f.emit_rdpmc_start(1, Gpr::R15 as u8);
     emit_content(&mut f);
-    f.emit_rdpmc_end(0, Gpr::R15 as u8, Gpr::Rax as u8);
+    f.emit_rdpmc_end(1, Gpr::R15 as u8, Gpr::Rax as u8);
     f.emit_ret();
     f.commit().unwrap();
     f
@@ -262,7 +262,7 @@ fn main() {
             } else { format!("unk_{:03x}", event) };
 
             let results = harness.measure(
-                asm_fn, *event, *umask, 512, 0, 0
+                asm_fn, *event, *umask, 512, InputMethod::Fixed(0, 0),
             ).unwrap();
 
             let dist = results.get_distribution();
