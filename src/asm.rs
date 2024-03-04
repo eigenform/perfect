@@ -29,10 +29,9 @@ use crate::MeasuredFn;
 /// Fallback/default assembler from [dynasmrt]. 
 pub type X64Assembler = Assembler<X64Relocation>;
 
-
 /// This is supposed to mimic the behavior of [dynasmrt::Assembler], 
 /// but where the size and address of the backing memory is fixed.
-pub struct PerfectAsm {
+pub struct X64AssemblerFixed {
     /// Pointer to backing allocation
     pub ptr: *const u8,
     /// Size of backing allocation
@@ -45,7 +44,7 @@ pub struct PerfectAsm {
     pub managed: ManagedRelocs<X64Relocation>,
     pub error: Option<DynasmError>,
 }
-impl PerfectAsm { 
+impl X64AssemblerFixed { 
 
     /// Obtain a anonymous fixed mapping at the requested address. 
     fn mmap_fixed(req_addr: usize, len: usize) -> *mut u8 {
@@ -107,7 +106,7 @@ impl PerfectAsm {
     }
 }
 
-impl PerfectAsm { 
+impl X64AssemblerFixed { 
     pub fn new(addr: usize, len: usize) -> Self {
         let ptr = Self::mmap_fixed(addr, len);
         Self { 
@@ -229,20 +228,20 @@ impl PerfectAsm {
 }
 
 /// Presumably we want to call `munmap` when this object is destroyed. 
-impl Drop for PerfectAsm { 
+impl Drop for X64AssemblerFixed { 
     fn drop(&mut self) {
         self.unmap();
     }
 }
 
 // Required for implementing [DynasmApi].
-impl Extend<u8> for PerfectAsm {
+impl Extend<u8> for X64AssemblerFixed {
     fn extend<T>(&mut self, iter: T) where T: IntoIterator<Item=u8> {
         self.ops.extend(iter)
     }
 }
 // Required for implementing [DynasmApi].
-impl <'a> Extend<&'a u8> for PerfectAsm {
+impl <'a> Extend<&'a u8> for X64AssemblerFixed {
     fn extend<T>(&mut self, iter: T) where T: IntoIterator<Item=&'a u8> {
         self.ops.extend(iter)
     }
@@ -252,7 +251,7 @@ impl <'a> Extend<&'a u8> for PerfectAsm {
 // to be extensible (like a [Vec]); we probably want to just panic in all of 
 // the cases where the requested assembly would become larger than the size of 
 // backing memory. 
-impl DynasmApi for PerfectAsm {
+impl DynasmApi for X64AssemblerFixed {
     fn offset(&self) -> AssemblyOffset {
         AssemblyOffset(self.ops.len())
     }
@@ -278,7 +277,7 @@ impl DynasmApi for PerfectAsm {
     }
 }
 
-impl DynasmLabelApi for PerfectAsm {
+impl DynasmLabelApi for X64AssemblerFixed {
     type Relocation = X64Relocation;
 
     fn local_label(&mut self, name: &'static str) {
@@ -381,7 +380,7 @@ impl DynasmLabelApi for PerfectAsm {
     }
 }
 
-/// Utility functions that you might want on something implementing [DynasmApi].
+/// Utility functions you might want on something implementing [DynasmApi].
 pub trait Emitter: DynasmLabelApi<Relocation=X64Relocation> {
     fn place_dynamic_label(&mut self, lab: DynamicLabel) {
         dynasm!(self ; =>lab);
@@ -621,7 +620,7 @@ pub trait Emitter: DynasmLabelApi<Relocation=X64Relocation> {
 
 // Implement [Emitter] for all of the JIT assemblers we care about
 impl Emitter for X64Assembler {}
-impl Emitter for PerfectAsm {}
+impl Emitter for X64AssemblerFixed {}
 
 
 // ==========================================================================

@@ -107,7 +107,9 @@ impl BranchOutcomes {
 
 pub struct ConditionalBranch;
 impl ConditionalBranch {
-    pub fn emit_je_nopad(brn_addr: usize, tgt_addr: usize) -> PerfectAsm {
+    pub fn emit_je_nopad(brn_addr: usize, tgt_addr: usize) 
+        -> X64AssemblerFixed
+    {
         assert!(brn_addr < 0x0000_7000_0000_0000);
         assert!(tgt_addr > brn_addr);
 
@@ -116,7 +118,7 @@ impl ConditionalBranch {
         let tgt_off = tgt_addr - brn_addr;
         assert!(tgt_off < 0x0000_0001_0000_0000);
 
-        let mut asm = PerfectAsm::new(base_addr, 0x0000_0001_8000_0000);
+        let mut asm = X64AssemblerFixed::new(base_addr, 0x0000_0001_8000_0000);
 
         asm.pad_until(brn_addr - 0x18);
         asm.emit_rdpmc_start(0, Gpr::R15 as u8);

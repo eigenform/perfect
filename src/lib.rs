@@ -5,11 +5,13 @@
 #![allow(unused_imports)]
 #![allow(dead_code)]
 
-pub mod zen2;
+
 pub mod asm;
 pub mod harness;
 pub mod experiments;
 pub mod util;
+
+pub mod events;
 
 pub use crate::asm::*;
 pub use crate::harness::*;
