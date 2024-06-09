@@ -1,12 +1,25 @@
-//! Store-to-load forwarding (and memory renaming) 
+//! Store-to-load forwarding
 
 use perfect::*;
 use perfect::events::*;
-use std::collections::*;
-
 use rand::prelude::*;
 
-/// Observe the effects of store queue pressure on STLF eligibility.
+fn main() {
+    let mut harness = HarnessConfig::default_zen2().emit();
+    StlfStoreQueueCapacity::run(&mut harness);
+    StlfEligibility::run(&mut harness);
+}
+
+/// Observe the effects of store queue pressure on store-to-load forwarding
+/// (STLF) eligibility.
+///
+/// Explanation
+/// ===========
+///
+/// STLF relies on the store queue, which has limited capacity.
+/// The Family 17h SOG mentions that the store queue capacity is 48 entries. 
+/// When a store is pushed out of the queue, we cannot forward the value to
+/// a dependent load. 
 ///
 /// Test
 /// ====
@@ -21,10 +34,10 @@ use rand::prelude::*;
 ///
 /// 1. STLF events only occur *reliably* with 39 padding stores (40 in-flight).
 ///
-/// 2. STLF events only occur once during the first test iteration when
+/// 2. STLF events only occur once *during the first test iteration* when
 ///    there are more than 40 in-flight stores. (I'm not sure why?)
 ///
-/// 3. After 48 in-flight stores, an STLF event *never* occur. 
+/// 3. After 48 in-flight stores, an STLF event *never* occurs. 
 ///    This is the capacity of the store queue.
 ///
 pub struct StlfStoreQueueCapacity;
@@ -40,7 +53,8 @@ impl StlfStoreQueueCapacity {
         addrs.shuffle(&mut rng);
 
         dynasm!(f
-            ; mov rax, 0xdeadbeef
+            ; mov rax, 0xdead_beef
+            ; mov rbx, 0x0001_0000
             ; sfence
             ; lfence
             ; .align 4096
@@ -49,12 +63,14 @@ impl StlfStoreQueueCapacity {
         f.emit_rdpmc_start(1, Gpr::R15 as u8);
 
         // Store we expect to be forwarded
-        dynasm!(f ; mov [0x0001_0000], rax );
+        dynasm!(f ; mov [rbx], rax );
 
         // Padding stores
         for store_num in 0..num_stores { 
             let addr = addrs[store_num];
             dynasm!(f ; mov [addr], rax );
+            //dynasm!(f ; mov rcx, addr as _ );
+            //dynasm!(f ; mov [rcx], rax);
         }
 
         // Target load whose result we expect to be forwarded
@@ -66,9 +82,12 @@ impl StlfStoreQueueCapacity {
         f
     }
 
-    fn run(harness: &mut PerfectHarness) {
+    pub fn run(harness: &mut PerfectHarness) {
         println!("[*] STLF store queue pressure");
-        let event = Zen2Event::LsSTLF(0x00).event();
+        let mut events = EventSet::new();
+        events.add(Zen2Event::LsSTLF(0x00));
+        events.add(Zen2Event::LsDispatch(LsDispatchMask::StDispatch));
+
         for num_stores in 0..=49 {
             let asm = Self::emit(num_stores);
             let asm_reader = asm.reader();
@@ -77,16 +96,20 @@ impl StlfStoreQueueCapacity {
             let asm_fn: MeasuredFn = unsafe { 
                 std::mem::transmute(asm_tgt_ptr)
             };
-            let results = harness.measure(asm_fn, 
-                event.id(), event.mask(), 512, InputMethod::Fixed(0, 0)
-            ).unwrap();
 
-            let dist = results.get_distribution();
-            let min = results.get_min();
-            let max = results.get_max();
             println!("  Padding stores: {}", num_stores);
-            println!("    {:03x}:{:02x} {:032} min={} max={} dist={:?}", 
-                event.id(), event.mask(), event.name(), min, max, dist);
+            for event in events.iter() {
+                let desc = event.as_desc();
+                let results = harness.measure(asm_fn, 
+                    desc.id(), desc.mask(), 512, InputMethod::Fixed(0, 0)
+                ).unwrap();
+
+                let dist = results.get_distribution();
+                let min = results.get_min();
+                let max = results.get_max();
+                println!("    {:03x}:{:02x} {:032} min={} max={} dist={:?}", 
+                    desc.id(), desc.mask(), desc.name(), min, max, dist);
+            }
         }
         println!();
     }
@@ -116,8 +139,8 @@ impl StlfStoreQueueCapacity {
 /// bit is set in the displacement. If this store is aliasing with the
 /// original store, we expect that STLF will *not* occur.
 ///
-/// Result
-/// ======
+/// Results
+/// =======
 ///
 /// Displacement bits [11:0] (0xfff) are used for STLF eligibility.
 /// An STLF event is only observed when the padding store has one of the low 
@@ -149,9 +172,10 @@ impl StlfEligibility {
         f
     }
 
-    fn run(harness: &mut PerfectHarness) {
+    pub fn run(harness: &mut PerfectHarness) {
         println!("[*] STLF eligibility");
-        let event = Zen2Event::LsSTLF(0x00).event();
+        let event = Zen2Event::LsSTLF(0x00);
+        let desc = event.as_desc();
 
         for bit in 0..=15 {
             let disp = (1 << bit); 
@@ -163,7 +187,7 @@ impl StlfEligibility {
                 std::mem::transmute(asm_tgt_ptr)
             };
             let results = harness.measure(asm_fn, 
-                event.id(), event.mask(), 512, InputMethod::Fixed(0, 0)
+                desc.id(), desc.mask(), 512, InputMethod::Fixed(0, 0)
             ).unwrap();
 
             let dist = results.get_distribution();
@@ -171,21 +195,11 @@ impl StlfEligibility {
             let max = results.get_max();
             println!("  Bit: {:02} ({:08x})", bit, 0x0001_0000 | disp);
             println!("    {:03x}:{:02x} {:032} min={} max={} dist={:?}", 
-                event.id(), event.mask(), event.name(), min, max, dist);
+                desc.id(), desc.mask(), desc.name(), min, max, dist);
         }
         println!();
     }
 
 }
 
-
-fn main() {
-    PerfectEnv::pin_to_core(15);
-    let _ = PerfectEnv::mmap_fixed(0, 0x8000_0000);
-    let mut harness = HarnessConfig::default().emit();
-
-    StlfStoreQueueCapacity::run(&mut harness);
-    StlfEligibility::run(&mut harness);
-    
-}
 

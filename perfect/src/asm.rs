@@ -24,6 +24,9 @@ use iced_x86::{
 
 use nix::sys::mman::{ ProtFlags, MapFlags, mmap, munmap, mprotect };
 
+use rand::Rng;
+use rand::distributions::{ Distribution, Standard };
+
 use crate::MeasuredFn;
 
 /// Fallback/default assembler from [dynasmrt]. 
@@ -142,6 +145,8 @@ impl X64AssemblerFixed {
 
     /// Pad with NOP until the requested address. 
     /// Returns the number of emitted bytes. 
+    ///
+    /// FIXME: Adjustable encoding size? 
     pub fn pad_until(&mut self, addr: usize) -> usize {
         if self.cur_addr() == addr { 
             return 0;
@@ -197,11 +202,14 @@ impl X64AssemblerFixed {
     }
 
     /// Disassemble bytes in the backing allocation. 
-    pub fn disas(&self) {
-        let ptr: *const u8 = self.ptr;
+    pub fn disas(&self, offset: AssemblyOffset, max_inst: Option<usize>) {
+        let ptr: *const u8 = unsafe { 
+            self.ptr.offset(offset.0 as isize)
+        };
         let addr: u64   = self.ptr as u64;
+        let buf_len = self.cursor() - offset.0;
         let buf: &[u8]  = unsafe { 
-            std::slice::from_raw_parts(ptr, self.cursor())
+            std::slice::from_raw_parts(ptr, buf_len)
         };
 
         let mut decoder = Decoder::with_ip(64, buf, addr, DecoderOptions::NONE);
@@ -211,7 +219,11 @@ impl X64AssemblerFixed {
         let mut output = String::new();
         let mut instr  = Instruction::default();
 
+        let mut num_inst = 0;
         while decoder.can_decode() {
+            if let Some(max) = max_inst {
+                if num_inst >= max { break; }
+            }
             decoder.decode_out(&mut instr);
             output.clear();
             formatter.format(&instr, &mut output);
@@ -223,6 +235,7 @@ impl X64AssemblerFixed {
                 bytestr.push_str(&format!("{:02x}", b));
             }
             println!("{:016x}: {:32} {}", instr.ip(), bytestr, output);
+            num_inst += 1;
         }
     }
 }
@@ -559,6 +572,10 @@ pub trait Emitter: DynasmLabelApi<Relocation=X64Relocation> {
     /// later if you want to measure with multiple counters). 
     ///
     /// NOTE: This block of code is 0x18 bytes. 
+    ///
+    /// NOTE: This [presumably] allocates two physical registers: one for RCX, 
+    /// and one for the result of RDPMC in RAX.
+    ///
     fn emit_rdpmc_start(&mut self, counter: i32, scratch: u8) {
         dynasm!(self 
             ; lfence
@@ -582,6 +599,18 @@ pub trait Emitter: DynasmLabelApi<Relocation=X64Relocation> {
             ; rdpmc
             ; lfence
             ; sub Rq(result), Rq(scratch)
+            ; lfence
+        );
+    }
+
+    fn emit_rdpmc_to_addr(&mut self, counter: i32, addr: i32) {
+        dynasm!(self
+            ; lfence
+            ; mov rcx, counter
+            ; lfence
+            ; rdpmc
+            ; lfence
+            ; mov [addr], rax
             ; lfence
         );
     }
@@ -614,16 +643,16 @@ pub trait Emitter: DynasmLabelApi<Relocation=X64Relocation> {
         );
     }
 
-
-
+    fn emit_flush_btb(&mut self, iter: usize) {
+        for _ in 0..iter { 
+            dynasm!(self ; jmp >flush_next; flush_next: );
+        }
+    }
 }
 
 // Implement [Emitter] for all of the JIT assemblers we care about
 impl Emitter for X64Assembler {}
 impl Emitter for X64AssemblerFixed {}
-
-
-// ==========================================================================
 
 
 // Various flavors of NOP encoding [see the Family 17h SOG]
@@ -643,7 +672,58 @@ pub const NOP15: [u8; 15] = [
 ];
 
 #[repr(u8)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
+pub enum VectorGpr {
+    YMM0 = 0,
+    YMM1 = 1,
+    YMM2 = 2,
+    YMM3 = 3,
+    YMM4 = 4,
+    YMM5 = 5,
+    YMM6 = 6,
+    YMM7 = 7,
+    YMM8 = 8,
+    YMM9 = 9,
+    YMM10 = 10,
+    YMM11 = 11,
+    YMM12 = 12,
+    YMM13 = 13,
+    YMM14 = 14,
+    YMM15 = 15,
+}
+impl VectorGpr {
+    pub fn as_usize(&self) -> usize { 
+        *self as usize
+    }
+}
+impl From<u8> for VectorGpr {
+    fn from(x: u8) -> Self {
+        match x {
+            0  => Self::YMM0,
+            1  => Self::YMM1,
+            2  => Self::YMM2,
+            3  => Self::YMM3,
+            4  => Self::YMM4,
+            5  => Self::YMM5,
+            6  => Self::YMM6,
+            7  => Self::YMM7,
+            8  => Self::YMM8,
+            9  => Self::YMM9,
+            10 => Self::YMM10,
+            11 => Self::YMM11,
+            12 => Self::YMM12,
+            13 => Self::YMM13,
+            14 => Self::YMM14,
+            15 => Self::YMM15,
+            _ => unreachable!(),
+        }
+    }
+}
+
+
+
+#[repr(u8)]
+#[derive(Clone, Copy, Debug)]
 pub enum Gpr {
     Rax = 0,
     Rcx = 1,
@@ -661,6 +741,11 @@ pub enum Gpr {
     R13 = 13,
     R14 = 14,
     R15 = 15,
+}
+impl Gpr {
+    pub fn as_usize(&self) -> usize { 
+        *self as usize
+    }
 }
 impl From<u8> for Gpr {
     fn from(x: u8) -> Self {
@@ -685,4 +770,31 @@ impl From<u8> for Gpr {
         }
     }
 }
+
+impl Distribution<Gpr> for Standard {
+    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> Gpr {
+        // assume r15 is reserved
+        let r = rng.gen_range(0..=15);
+        match r {
+            0 => Gpr::Rax,
+            1 => Gpr::Rcx,
+            2 => Gpr::Rdx,
+            3 => Gpr::Rbx,
+            4 => Gpr::Rax,
+            5 => Gpr::Rcx,
+            6 => Gpr::Rsi,
+            7 => Gpr::Rdi,
+            8 => Gpr::R8,
+            9 => Gpr::R9,
+            10 => Gpr::R10,
+            11 => Gpr::R11,
+            12 => Gpr::R12,
+            13 => Gpr::R13,
+            14 => Gpr::R14,
+            15 => Gpr::R15,
+            _ => unreachable!(),
+        }
+    }
+}
+
 

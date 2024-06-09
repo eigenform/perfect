@@ -1,8 +1,9 @@
 
-// NOTE: This really sucks. 
+// NOTE: This strategy for defining events kind of sucks. 
 
 use crate::events::*;
 
+#[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
 pub enum FpRetSseAvxOpsMask {
     SseMovOps,
     SseMovOpsElim,
@@ -22,6 +23,7 @@ impl FpRetSseAvxOpsMask {
     }
 }
 
+#[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
 pub enum LsBadStatus2Mask {
     UnkWidthMismatch,
     Unk(u8),
@@ -37,6 +39,7 @@ impl LsBadStatus2Mask {
 
 
 
+#[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
 pub enum LsDispatchMask {
     LdDispatch,
     StDispatch,
@@ -55,6 +58,7 @@ impl LsDispatchMask {
 }
 
 
+#[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
 pub enum BpRedirectMask {
     BpL2Redir,
     Unk(u8),
@@ -69,6 +73,7 @@ impl BpRedirectMask {
 }
 
 
+#[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
 pub enum DeMsStallMask {
     Serialize,
     WaitForQuiet,
@@ -97,6 +102,7 @@ impl DeMsStallMask {
 }
 
 
+#[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
 pub enum DeDisOpsFromDecoderMask {
     FastPath,
     Microcode,
@@ -117,6 +123,7 @@ impl DeDisOpsFromDecoderMask {
 }
 
 
+#[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
 pub enum DeDisDispatchTokenStalls1Mask {
     IntPhyRegFileRsrcStall,
     LoadQueueRsrcStall,
@@ -153,6 +160,7 @@ impl DeDisDispatchTokenStalls1Mask {
 }
 
 
+#[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
 pub enum DeDisDispatchTokenStalls0Mask {
     ALSQ1RsrcStall,
     ALSQ2RsrcStall,
@@ -186,12 +194,20 @@ impl DeDisDispatchTokenStalls0Mask {
 }
 
 
+#[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
 pub enum DsTokStall3Mask {
+    /// Cycles where one op was dispatched
     Cop1Disp,
+    /// Cycles where two ops were dispatched
     Cop2Disp,
+    /// Cycles where three ops were dispatched
     Cop3Disp,
+    /// Cycles where four ops were dispatched
     Cop4Disp,
+    /// Cycles where five ops were dispatched
     Cop5Disp,
+    /// Cycles where at least one op was dispatched
+    NonZero,
     Unk(u8),
 }
 impl DsTokStall3Mask {
@@ -202,14 +218,24 @@ impl DsTokStall3Mask {
             Self::Cop3Disp => MaskDesc::new(0x08, "Cop3Disp"),
             Self::Cop4Disp => MaskDesc::new(0x10, "Cop4Disp"),
             Self::Cop5Disp => MaskDesc::new(0x20, "Cop5Disp"),
+            Self::NonZero => MaskDesc::new(0x7e, "NonZero"),
             Self::Unk(x) => MaskDesc::new(*x, "Unk"),
         }
     }
 }
 
 
-
-
+/// Zen 2 events. 
+///
+/// This list is cobbled together from documentation for various Zen families 
+/// and lots of experiments. In short: the Zen 2 PPRs do not exhaustively list 
+/// all of the supported events on Zen 2 parts. 
+///
+/// Instead of statically defining all of these, the full event is built out 
+/// of this enum during runtime. This is largely just a hack to get a nice 
+/// auto-complete-able enum of events in my editor with 'rust-analyzer'. 
+///
+#[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
 pub enum Zen2Event { 
     FpRetSseAvxOps(FpRetSseAvxOpsMask),
     FpOpsRetiredByType(u8),
@@ -242,6 +268,10 @@ pub enum Zen2Event {
     BpDeReDirect(u8),
     BpRedirect(BpRedirectMask),
 
+    // 0xa7 is valid
+    // 0xac is valid
+    // 0xad is valid
+
     DeMsStall(DeMsStallMask),
     DeDisUopQueueEmpty(u8),
     DeSrcOpDisp(u8),
@@ -254,6 +284,10 @@ pub enum Zen2Event {
     DsTokStall3(DsTokStall3Mask),
     Dsp0Stall(u8),
     DsCopsAfterBrnInDspGrp(u8),
+    DsLoopModeInstrs(u8),
+    //StkEngFx(u8), // 0xb8
+    //StkEng(u8), // 0xbe
+    //RipRelAgenUsesDisp // 0xbf
 
     ExRetInstr(u8),
     ExRetCops(u8),
@@ -273,11 +307,27 @@ pub enum Zen2Event {
     ExRetUcodeOps(u8),
     ExRetMsprdBrnchInstrDirMsmtch(u8),
     Bp1RetBrUncondMisp(u8),
+
+    // 0xd5 and 0x1d6 seem related, count speculative ops. 
+    //  Counts for: 
+    //      - zero idioms, add immediate
+    //      - register-to-register moves from a nonzero register? 
+    //  Doesn't count for:
+    //      - register-to-register moves from a zeroed register?
+
+
+    // Think this is *retired* eliminated moves
     ExMovElim(u8),
+
+    Unk(u16, u8),
 }
-impl Zen2Event { 
-    pub fn event(&self) -> EventDesc { 
+impl AsEventDesc for Zen2Event { 
+    fn as_desc(&self) -> EventDesc { 
         match self { 
+            Self::Unk(v, x) => {
+                let mask = MaskDesc::new_unk(*x);
+                EventDesc::new_unk(*v, mask)
+            },
             Self::FpRetSseAvxOps(m) => {
                 let mask = m.desc();
                 EventDesc::new(0x003, "FpRetSseAvxOps", mask)
@@ -441,6 +491,12 @@ impl Zen2Event {
                 let mask = MaskDesc::new_unk(*x);
                 EventDesc::new(0x0b6, "DsCopsAfterBrnInDspGrp", mask)
             },
+
+            Self::DsLoopModeInstrs(x) => {
+                let mask = MaskDesc::new_unk(*x);
+                EventDesc::new(0x0b7, "DsLoopModeInstrs", mask)
+            },
+
             Self::ExRetInstr(x) => {
                 let mask = MaskDesc::new_unk(*x);
                 EventDesc::new(0x0c0, "ExRetInstr", mask)
@@ -518,122 +574,5 @@ impl Zen2Event {
         }
     }
 }
-
-
-//decl_event_masks!(FpRetSseAvxOps, 0x003, "Retired FP ops",
-//    SseMovOps, 0x01, "Move operations"
-//    SseMovOpsElim, 0x02, "Move operations eliminated"
-//    OptPotential, 0x04, ""
-//    Optimized, 0x08, ""
-//);
-//decl_event!(FpOpsRetiredByType, 0x00a, "");
-//decl_event!(FpSseAvxOpsRetired, 0x00b, "");
-//decl_event!(FpPackOpsRetired, 0x00c, "");
-//decl_event!(FpPackedIntOpType, 0x00d, "");
-//decl_event!(FpDispFaults, 0x00e, "");
-//
-//decl_event_masks!(LsBadStatus2, 0x024, "",
-//    UnkWidthMismatch, 0x02, ""
-//);
-//decl_event!(LsLocks, 0x025, "");
-//decl_event!(LsRetClFlush, 0x026, "");
-//decl_event!(LsRetCpuid, 0x027, "");
-//decl_event_masks!(LsDispatch, 0x029, "",
-//    LdDispatch, 0x01, "Loads"
-//    StDispatch, 0x02, "Stores"
-//    LdStDispatch, 0x04, "Load/stores"
-//);
-//decl_event!(LsDataPipe, 0x02f, "");
-//decl_event!(LsStMisalign, 0x032, "");
-//decl_event!(LsSTLF, 0x035, "");
-//decl_event!(LsStoreCommitCancel, 0x036, "");
-//decl_event!(LsStoreCommitCancel2, 0x037, "");
-//decl_event!(LsMabAlloc, 0x041, "");
-//decl_event!(LsMisalLoads, 0x047, "");
-//decl_event!(LsPrefInstrDisp, 0x04b, "");
-//decl_event!(LsWcbClosePremature, 0x050, "");
-//decl_event!(LsNotHaltedCyc, 0x076, "Cycles not in halt");
-//
-//decl_event!(BpL1BTBCorrect, 0x08a, "");
-//decl_event!(BpL2BTBCorrect, 0x08b, "");
-//decl_event!(BpL0BTBHit, 0x08d, "");
-//decl_event!(BpDynIndPred, 0x08e, "");
-//decl_event!(IfDqBytesFetched, 0x08f, "");
-//decl_event!(BpDeReDirect, 0x091, "");
-//decl_event_masks!(BpRedirect, 0x09f, "",
-//    BpL2Redir, 0x20, ""
-//);
-//
-//decl_event_masks!(DeMsStall, 0x0a8, "",
-//    Serialize, 0x01, ""
-//    WaitForQuiet, 0x02, ""
-//    WaitForSegId, 0x04, ""
-//    WaitForStQ, 0x08, ""
-//    WaitForQuietCurTID, 0x10, ""
-//    WaitForQuietOthrTID, 0x20, ""
-//    MutexStall, 0x40, ""
-//    WaitForCount, 0x80, ""
-//);
-//decl_event!(DeDisUopQueueEmpty, 0x0a9, "");
-//decl_event!(DeSrcOpDisp, 0x0aa, "");
-//decl_event_masks!(DeDisOpsFromDecoder, 0x0ab, "",
-//    FastPath, 0x01, ""
-//    Microcode, 0x02, ""
-//    Fp, 0x04, ""
-//    Int, 0x08, ""
-//);
-//decl_event_masks!(DeDisDispatchTokenStalls1, 0x0ae, "",
-//    IntPhyRegFileRsrcStall, 0x01, ""
-//    LoadQueueRsrcStall, 0x02, ""
-//    StoreQueueRsrcStall, 0x04, ""
-//    IntSchedulerMiscRsrcStall, 0x08, ""
-//    TakenBrnchBufferRsrc, 0x10, ""
-//    FpRegFileRsrcStall, 0x20, ""
-//    FpSchRsrcStall, 0x40, ""
-//    FpMiscRsrcStall, 0x80, ""
-//);
-//decl_event_masks!(DeDisDispatchTokenStalls0, 0x0af, "",
-//    ALSQ1RsrcStall, 0x01, ""
-//    ALSQ2RsrcStall, 0x02, ""
-//    ALSQ3_0_TokenStall, 0x04, ""
-//    ALUTokenStall, 0x08, ""
-//    AGSQTokenStall, 0x10, ""
-//    RetireTokenStall, 0x20, ""
-//    ScAguDispatchStall, 0x40, ""
-//);
-//decl_event!(MemFileHit, 0x0b1, "");
-//decl_event!(MemRenLdDsp, 0x0b2, "");
-//decl_event!(MemRenLdElim, 0x0b3, "");
-//
-//decl_event_masks!(DsTokStall3, 0x0b4, "",
-//    Cop1Disp, 0x02, ""
-//    Cop2Disp, 0x04, ""
-//    Cop3Disp, 0x08, ""
-//    Cop4Disp, 0x10, ""
-//    Cop5Disp, 0x20, ""
-//);
-//decl_event!(Dsp0Stall, 0x0b5, "");
-//decl_event!(DsCopsAfterBrnInDspGrp, 0x0b6, "");
-//
-//decl_event!(ExRetInstr, 0x0c0, "");
-//decl_event!(ExRetCops, 0x0c1, "");
-//decl_event!(ExRetBrn, 0x0c2, "");
-//decl_event!(ExRetBrnMisp, 0x0c3, "");
-//decl_event!(ExRetBrnTaken, 0x0c4, "");
-//decl_event!(ExRetBrnTakenMisp, 0x0c5, "");
-//decl_event!(ExRetBrnFar, 0x0c6, "");
-//decl_event!(ExRetNearRet, 0x0c8, "");
-//decl_event!(ExRetNearRetMisp, 0x0c9, "");
-//decl_event!(ExRetBrnIndMisp, 0x0ca, "");
-//decl_event!(ExRetMmxFpInstr, 0x0cb, "");
-//decl_event!(ExRetCond, 0x0d1, "");
-//decl_event!(ExRetireEmpty, 0x0d9, "");
-//
-//decl_event!(ExRetUcodeInst, 0x1c0, "");
-//decl_event!(ExRetUcodeOps, 0x1c1, "");
-//decl_event!(ExRetMsprdBrnchInstrDirMsmtch, 0x1c7, "");
-//decl_event!(Bp1RetBrUncondMisp, 0x1c8, "");
-//decl_event!(ExMovElim, 0x1db, "");
-
 
 

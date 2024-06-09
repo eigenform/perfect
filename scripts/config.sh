@@ -11,15 +11,15 @@ BOOST_CTRL=/sys/devices/system/cpu/cpufreq/boost
 GOV_CTRL=/sys/devices/system/cpu/cpufreq/policy0/scaling_governor
 
 if [[ ${1} == "on" ]]; then 
-	echo 2 > ${RDPMC_CTRL}
-	echo 0 > ${BOOST_CTRL}
-	echo 'performance' > ${GOV_CTRL}
-	sysctl vm.mmap_min_addr=0
+	./smt.sh off
+	./rdpmc.sh on
+	./freq.sh on
+	./low-mmap.sh on
 elif [[ ${1} == "off" ]]; then 
-	echo 1 > ${RDPMC_CTRL}
-	echo 1 > ${BOOST_CTRL}
-	echo 'schedutil' > ${GOV_CTRL}
-	sysctl vm.mmap_min_addr=65536
+	./smt.sh on
+	./rdpmc.sh off
+	./freq.sh off
+	./low-mmap.sh off
 else
 	echo "usage: $0 [off|on]"
 	exit -1

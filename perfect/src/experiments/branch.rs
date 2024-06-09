@@ -16,7 +16,6 @@ use dynasmrt::{
 fn align_down(addr: usize, bits: usize) -> usize {
     let align: usize = (1 << bits);
     let mask: usize  = !(align - 1);
-
     (addr & mask).wrapping_sub(align)
 }
 
