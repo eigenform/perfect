@@ -7,6 +7,11 @@ use dynasmrt::{
 use iced_x86::{ 
     Decoder, DecoderOptions, Instruction, Formatter, IntelFormatter 
 };
+use perf_event::{ Builder, Group, Counter };
+use perf_event::events::*;
+use perf_event::hooks::sys::bindings::perf_event_mmap_page;
+use crate::harness::{PerfectHarness, TargetPlatform};
+use crate::events::EventDesc;
 
 
 /// Utilities for controlling the state of the current process.
@@ -149,6 +154,38 @@ impl PerfectEnv {
     }
 }
 
+pub fn disas_str_single(buf: &ExecutableBuffer, offset: AssemblyOffset) 
+    -> (String, String)
+{
+    let ptr: *const u8 = buf.ptr(offset);
+    let addr: u64   = ptr as u64;
+    let buf: &[u8]  = unsafe { 
+        std::slice::from_raw_parts(ptr, buf.len() - offset.0)
+    };
+
+    let mut decoder = Decoder::with_ip(64, buf, addr, DecoderOptions::NONE);
+    let mut formatter = IntelFormatter::new();
+    formatter.options_mut().set_digit_separator("_");
+    let _ = formatter.options_mut().first_operand_char_index();
+    let mut output = String::new();
+    let mut instr  = Instruction::default();
+
+    let mut res = String::new();
+    let mut bytestr = String::new();
+    if decoder.can_decode() {
+        decoder.decode_out(&mut instr);
+        output.clear();
+        formatter.format(&instr, &mut output);
+
+        let start_idx = (instr.ip() - addr) as usize;
+        let instr_bytes = &buf[start_idx..start_idx + instr.len()];
+        for b in instr_bytes.iter() {
+            bytestr.push_str(&format!("{:02x}", b));
+        }
+    }
+    (bytestr, output)
+}
+
 pub fn disas(
     buf: &ExecutableBuffer, 
     offset: AssemblyOffset, 
@@ -258,6 +295,40 @@ pub fn align_down(addr: usize, bits: usize) -> usize {
     let mask: usize  = !(align - 1);
     (addr & mask).wrapping_sub(align)
 }
+
+#[inline(always)]
+pub fn flush_btb<const CNT: usize>() {
+    unsafe { 
+        core::arch::asm!(r#"
+        .rept {cnt}
+        jmp 1f
+        1:
+        .endr
+        "#, cnt = const CNT,
+        );
+    }
+}
+
+// NOTE: Quick hack for building this outside of [PerfectHarness]
+pub fn build_pmc_counter(p: TargetPlatform, desc: &EventDesc) -> Counter { 
+        let mut ctr = match p {
+            TargetPlatform::Zen2 => {
+                let cfg = PerfectHarness::make_cfg_amd(desc.id(), desc.mask());
+                Builder::new()
+                .kind(Event::Raw(cfg))
+                .build().unwrap()
+            },
+            TargetPlatform::Tremont => {
+                let cfg = PerfectHarness::make_cfg_intel(desc.id() as u8, desc.mask());
+                Builder::new()
+                .kind(Event::Raw(cfg))
+                .build().unwrap()
+            },
+        };
+        ctr
+}
+
+
 
 
 #[cfg(test)]

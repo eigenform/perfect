@@ -12,7 +12,6 @@ fn main() {
         .arena_alloc(0x0000_0000_0000_0000, 0x0000_0000_1000_0000)
         .emit();
     CorrelatedBranches::run(&mut harness);
-    //ConditionalBranch::run(&mut harness);
 }
 
 /// [Naively?] try to interfere with two correlated conditional branches. 
@@ -64,8 +63,11 @@ fn main() {
 ///
 pub struct CorrelatedBranches;
 impl CorrelatedBranches {
-    fn emit(num_padding: usize) -> X64Assembler {
-        let mut f = X64Assembler::new().unwrap();
+    fn emit(num_padding: usize) -> X64AssemblerFixed {
+        let mut f = X64AssemblerFixed::new(
+            0x0000_1000_0000_0000,
+            0x0000_0000_0080_0000
+        );
 
         // Set up the flags for when we execute the conditional branches. 
         // We expect RDI to be a *random* value (either 0 or 1). 
@@ -82,6 +84,16 @@ impl CorrelatedBranches {
         }
         f.emit_lfence();
 
+        // NOTE: Since we're using RDPMC to measure the last branch, 
+        // the alignment must be at least 5 bits (RDPMC uses 0x18 bytes).
+        let abit = 5;
+
+        let next = AlignedAddress::new(f.cur_addr(), Align::from_bit(abit))
+            .aligned().next().value();
+        f.pad_until(next);
+        println!("{:016x?}", next);
+
+
         // This branch is *always* predicted locally [assuming that we've really
         // cleared the state of global history before this] and it should not be
         // correlated with the outcome of a previous branch? 
@@ -94,14 +106,25 @@ impl CorrelatedBranches {
         );
 
         // Emit a variable number of unconditional padding branches.
-        for i in 0..num_padding {
-            if i == 0 {
-                continue;
-            } else {
-                dynasm!(f ; jmp >wow ; wow:);
-            }
+        let next = AlignedAddress::new(f.cur_addr(), Align::from_bit(abit))
+            .aligned().next().value();
+        let set = BranchSet::gen_uniform(
+            next,
+            Align::from_bit(abit), 
+            num_padding
+        );
+        f.pad_until(next);
+        for branch in set.data {
+            branch.emit_jmp_direct(&mut f);
         }
 
+        let next = AlignedAddress::new(f.cur_addr(), Align::from_bit(abit))
+            .aligned().next().value();
+        f.pad_until(next - 0x18);
+
+        // Measure this branch. 
+        // If a correlation with the first branch can be maintained, we expect
+        // this to be correctly-predicted. 
         f.emit_rdpmc_start(0, Gpr::R15 as u8);
         dynasm!(f
             ; je >bar
@@ -118,12 +141,10 @@ impl CorrelatedBranches {
         let desc = event.as_desc();
         for num_padding in 0..=128 {
             let f = Self::emit(num_padding);
-            let buf = f.finalize().unwrap();
-            let ptr = buf.ptr(AssemblyOffset(0));
-            let func: MeasuredFn = unsafe { std::mem::transmute(ptr) };
+            let func = f.as_fn();
 
             let results = harness.measure(func,
-                desc.id(), desc.mask(), 2048, 
+                desc.id(), desc.mask(), 4096, 
                 InputMethod::Random(&|rng, _| { 
                     (rng.gen::<bool>() as usize, 0) 
                 }),
@@ -137,179 +158,5 @@ impl CorrelatedBranches {
         }
     }
 }
-
-
-/// Describes the requested placement of a branch instruction. 
-#[derive(Clone)]
-pub struct Args {
-    padding: Vec<BranchDesc>,
-    test_brn: BranchDesc,
-}
-
-/// A region of code containing only a branch instruction. 
-///
-pub struct DirectBranchRegion {
-    branch: BranchDesc,
-    f: X64AssemblerFixed,
-}
-impl DirectBranchRegion {
-    // "JMP with a 32-bit signed offset" is encoded in 5 bytes
-    const JMP_ENC_LEN: usize = 5;
-    pub fn new(branch: BranchDesc) -> Self { 
-        assert!(branch.offset() >= 0x4000);
-        let mut f = X64AssemblerFixed::new(
-            branch.addr, 
-            0x0000_0000_0000_4000
-        );
-
-        let offset = branch.offset() - Self::JMP_ENC_LEN;
-        assert!(offset <= 0x7fff_ffff);
-        dynasm!(f
-            ; jmp offset as i32
-        );
-
-        f.commit().unwrap();
-        //f.disas(AssemblyOffset(0), None);
-        Self { branch, f }
-    }
-}
-
-pub struct ConditionalBranch;
-impl ConditionalBranch {
-    fn align_down(addr: usize, bits: usize) -> usize {
-        let align: usize = (1 << bits);
-        let mask: usize  = !(align - 1);
-        (addr & mask).wrapping_sub(align)
-    }
-
-    pub fn emit(args: Args) -> X64AssemblerFixed {
-        //assert!(brn_addr < 0x0000_7000_0000_0000);
-        //assert!(tgt_addr > brn_addr);
-
-        // Compute the base address of emitted code (default to 0xffff_0000).
-        let base_addr = if args.padding.len() != 0 {
-            let first_brn = &args.padding[0];
-            Self::align_down(first_brn.addr, 16)
-        } else {
-            0x0_ffff_0000
-        };
-
-        let mut asm = X64AssemblerFixed::new(
-            base_addr, 
-            0x0000_0001_0000_0000
-        );
-
-        //println!("[*] Starting at {:016x}", asm.cur_addr());
-
-        for brn in args.padding.iter() {
-            let tgt = asm.new_dynamic_label();
-
-            asm.pad_until(brn.addr);
-            assert_eq!(asm.cur_addr(), brn.addr);
-            if brn.offset() < 128 {
-                dynasm!(asm ; jmp BYTE =>tgt);
-            } else {
-                dynasm!(asm ; jmp =>tgt);
-            }
-            asm.pad_until(brn.tgt);
-            asm.place_dynamic_label(tgt);
-            assert_eq!(asm.cur_addr(), brn.tgt);
-        }
-
-        asm.pad_until(args.test_brn.addr - 0x18);
-        asm.emit_rdpmc_start(0, Gpr::R15 as u8);
-        assert_eq!(asm.cur_addr(), args.test_brn.addr);
-
-        let tgt = asm.new_dynamic_label();
-        if args.test_brn.offset() < 128 {
-            dynasm!(asm ; je BYTE =>tgt);
-        } else {
-            dynasm!(asm ; je =>tgt);
-        }
-        asm.pad_until(args.test_brn.tgt);
-        asm.place_dynamic_label(tgt);
-        assert_eq!(asm.cur_addr(), args.test_brn.tgt);
-
-        asm.emit_rdpmc_end(0, Gpr::R15 as u8, Gpr::Rax as u8);
-        asm.emit_ret();
-        asm.commit().unwrap();
-        asm
-    }
-
-    pub fn measure(
-        harness: &mut PerfectHarness,
-        args: &Args,
-    ) -> bool
-    {
-        println!("[*] test_brn={:016x} pad_brn={:016x}", 
-            args.test_brn.addr,
-            args.padding[0].addr,
-        );
-        let asm = Self::emit(args.clone());
-        //asm.disas(AssemblyOffset(0), None);
-        let func = asm.as_fn();
-        let event = Zen2Event::ExRetBrnMisp(0x00);
-        let desc = event.as_desc();
-        let results = harness.measure(func,
-            desc.id(), desc.mask(), 256, 
-            InputMethod::Random(&|rng, _| { 
-                (rng.gen::<bool>() as usize, 0) 
-            }),
-        ).unwrap();
-
-        let dist = results.get_distribution();
-        let min = results.get_min();
-        let max = results.get_max();
-        println!("    {:03x}:{:02x} {:032} min={} max={} dist={:?}",
-            desc.id(), desc.mask(), desc.name(), min, max, dist);
-        min == 1
-    }
-
-    pub fn run(harness: &mut PerfectHarness) {
-        let mut cases: Vec<Args> = Vec::new();
-        for test_idx in 0..=1 {
-            let test_addr: usize = if test_idx == 0 {
-                0x1_1000_0000
-            } else {
-                0x1_1000_0000 | (1 << test_idx)
-            };
-            let test_tgt: usize = test_addr + 2;
-            let test_brn = BranchDesc::new(test_addr, test_tgt);
-
-            for pad_idx in 0..=23 {
-                let pad_addr: usize = if pad_idx == 0 {
-                    0x1_0000_0000
-                } else {
-                    0x1_0000_0000 | (1 << pad_idx)
-                };
-                let pad_tgt: usize = 0x1_0100_0000;
-                let pad_brn = BranchDesc::new(pad_addr, pad_tgt);
-                let mut padding = Vec::new();
-                padding.push(pad_brn);
-                cases.push(Args { padding, test_brn });
-            }
-        }
-
-        let mut res: BTreeMap<usize, BTreeMap<usize, bool>> = BTreeMap::new();
-        for arg in cases.iter() {
-            let miss = Self::measure(harness, arg);
-            if let Some(map) = res.get_mut(&arg.test_brn.addr) {
-                map.insert(arg.padding[0].addr, miss);
-            } else {
-                res.insert(arg.test_brn.addr, BTreeMap::new());
-            }
-        }
-
-        for (test_addr, map) in res.iter() {
-            println!("[*] test_brn={:016X}", test_addr);
-            for (pad_addr, miss) in map.iter() {
-                println!("      pad_brn={:016X} miss?={}", pad_addr, miss);
-            }
-        }
-
-    }
-}
-
-
 
 

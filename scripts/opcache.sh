@@ -1,5 +1,6 @@
+#!/bin/bash
 
-# 0xc0011021, bit 5 is "opcache disable?"
+# 0xc0011021, bit 5 is "opcache disable" on Zen2
 
 if [[ -z ${1} ]]; then echo "usage: ${0} [off|on]"; exit -1; fi
 if [[ $EUID != 0 ]]; then echo "must be root"; exit -1; fi

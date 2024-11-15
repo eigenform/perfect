@@ -8,16 +8,11 @@ use std::collections::*;
 
 fn main() {
     let mut harness = HarnessConfig::default_zen2()
-        .arena_alloc(0x0000_0000_0000_0000, 0x0000_0000_1000_0000)
         .emit();
     BTBCapacity::run(&mut harness);
-
-    //for index in 0..4096 {
-    //    let x = BTBAddress::new(0, index, 0x2000);
-    //    println!("{}", x);
-    //}
-
 }
+
+
 
 /// A hypothetical BTB addressing scheme. 
 ///
@@ -75,9 +70,6 @@ impl std::fmt::Display for BTBAddress {
     }
 }
 
-pub struct BTBTest {
-}
-
 #[derive(Clone, Copy, Debug)]
 pub struct BTBCapacityArgs {
     start_addr: usize,
@@ -94,63 +86,38 @@ impl BTBCapacityArgs {
     }
 }
 
+
+/// Determine BTB capacity.
+///
+/// Context
+/// =======
+///
+/// Test
+/// ====
+///
+/// 1. Ensure that the BTB is polluted in the harness. 
+///
+///
+/// Results
+/// =======
+///
+
 pub struct BTBCapacity;
 impl BTBCapacity {
-    fn emit(arg: BTBCapacityArgs) -> X64AssemblerFixed {
+    const TEST_ADDR: usize  = 0x0000_0000_2000_0000;
 
-        let branches = BranchSet::gen_uniform(
-            arg.start_addr,
-            arg.align,
-            arg.num_padding
+    fn emit_measure() -> X64AssemblerFixed {
+
+        let mut f = X64AssemblerFixed::new(
+            Self::TEST_ADDR | 0x0000_1001_0000_0000,
+            0x0000_0000_0008_0000
         );
-
-
-        let fixed_len = 0x0000_0002_0002_0000;
-        let base_addr = align_down(arg.start_addr, 16);
-        let end_addr  = base_addr + fixed_len;
-        let mut f = X64AssemblerFixed::new(base_addr, fixed_len);
-        let head_lab = f.new_dynamic_label();
         dynasm!(f
-            ; cmp rdi, 0
+            ; mov r8, QWORD Self::TEST_ADDR as _
         );
-
-        f.place_dynamic_label(head_lab);
-        for branch in branches.data {
-            if branch.addr >= end_addr || branch.tgt >= end_addr {
-                panic!("{:016x?} exceeds limit {:016x}",
-                    branch, end_addr);
-            }
-
-            let lab = f.new_dynamic_label();
-            f.pad_until(branch.addr);
-            assert!(f.cur_addr() == branch.addr, "{:016x} != {:016x}", 
-                f.cur_addr(), branch.addr
-            );
-
-            if branch.offset() < 128 {
-                dynasm!(f ; jmp BYTE =>lab);
-            } else {
-                dynasm!(f ; jmp =>lab);
-            }
-            f.pad_until(branch.tgt);
-            assert!(f.cur_addr() == branch.tgt, "{:016x} != {:016x}", 
-                f.cur_addr(), branch.tgt
-            );
-            f.place_dynamic_label(lab);
-        }
-
         f.emit_rdpmc_start(0, Gpr::R15 as u8);
-
-        let test_addr = (f.cur_addr() & arg.align.index_mask()) 
-            + arg.align.value()
-            + arg.test_offset;
-        f.pad_until(test_addr);
-        assert!(f.cur_addr() == arg.test_addr(), "{:016x} != {:016x}", 
-            f.cur_addr(), arg.test_addr()
-        );
         dynasm!(f
-            ; je >end
-            ; end:
+            ; call r8
         );
         f.emit_rdpmc_end(0, Gpr::R15 as u8, Gpr::Rax as u8);
         f.emit_ret();
@@ -158,69 +125,99 @@ impl BTBCapacity {
         f
     }
 
+    fn emit(len: usize, align: usize) -> X64AssemblerFixed {
+       let mut set = BranchSet::gen_uniform_offset(
+            Self::TEST_ADDR,
+            Align::from_bit(align), 
+            0x0000_0000_0000_0000,
+            len,
+        );
+
+        let mut f = X64AssemblerFixed::new(
+            Self::TEST_ADDR,
+            0x0000_0000_0008_0000
+        );
+
+        f.pad_until(set.first().unwrap().addr);
+        for branch in set.data {
+            let lab = f.new_dynamic_label();
+            f.pad_until(branch.addr);
+            assert!(f.cur_addr() == branch.addr, "{:016x} != {:016x}", 
+                f.cur_addr(), branch.addr);
+            if branch.offset() < 128 {
+                dynasm!(f ; jmp BYTE =>lab);
+            } else {
+                dynasm!(f ; jmp =>lab);
+            }
+            f.pad_until(branch.tgt);
+            assert!(f.cur_addr() == branch.tgt, "{:016x} != {:016x}", 
+                f.cur_addr(), branch.tgt);
+            f.place_dynamic_label(lab);
+        }
+
+
+        f.emit_ret();
+
+        f.commit().unwrap();
+        f
+    }
+
     fn run(harness: &mut PerfectHarness) {
         //let event = Zen2Event::ExRetBrnMisp(0x00);
-        let event = Zen2Event::BpRedirect(BpRedirectMask::Unk(0x80));
-        let desc = event.as_desc();
-        let mut exp_results = ExperimentResults::new();
-        let mut case_res = ExperimentCaseResults::new("foo");
+        let mut events = EventSet::new();
+        events.add_list(&[
+            Zen2Event::LsNotHaltedCyc(0x00),
 
-        let mut args = Vec::new();
+            Zen2Event::IcFetchStallCyc(IcFetchStallCycMask::Any),
+            Zen2Event::IcFw32(0x00),
+            Zen2Event::IcFw32Miss(0x00),
+            //Zen2Event::IcCacheFillL2(0x00),
+            //Zen2Event::IcCacheFillSys(0x00),
 
-        for align_bit in 6..=6 {
-            for test_bit in 6..=19 {
-                //for num_padding in &[15,31,63,127,255,511,1023,2047,4095] {
-                for num_padding in &[8192] {
-                    //let start_addr_hi = harness.rng.gen_range(0x0001..=0x00ff);
-                    //let start_addr = start_addr_hi << 34;
-                    
-                    let test_offset = if test_bit == 0 { 0 } else { (1 << test_bit) };
+            //Zen2Event::Unk(0xa6, 0x01),
+            //Zen2Event::Unk(0xa6, 0x02),
+            //Zen2Event::Unk(0xa6, 0x04),
+            //Zen2Event::Unk(0xa6, 0x08),
+            //Zen2Event::Unk(0xa6, 0x10),
+            //Zen2Event::Unk(0xa6, 0x20),
+            //Zen2Event::Unk(0xa6, 0x40),
+            //Zen2Event::Unk(0xa6, 0x80),
 
-                    args.push(BTBCapacityArgs {
-                        start_addr: 0x0000_0001_0000_0000,
-                        //start_addr,
-                        align: Align::from_bit(align_bit),
-                        num_padding: *num_padding,
-                        test_offset,
-                    });
-                }
+            Zen2Event::BpRedirect(BpRedirectMask::Unk(0x01)),
+            Zen2Event::BpL0BTBHit(0x00),
+            Zen2Event::BpL1BTBCorrect(0x00),
+            Zen2Event::BpL2BTBCorrect(0x00),
+            Zen2Event::BpDeReDirect(0x01),
+            //Zen2Event::ExRetBrnMisp(0x00),
+            Zen2Event::ExRetBrnIndMisp(0x00),
+            //Zen2Event::ExRetBrnTakenMisp(0x00),
+            //Zen2Event::ExRetBrn(0x00),
+            //Zen2Event::ExRetMsprdBrnchInstrDirMsmtch(0x00),
+            Zen2Event::Bp1RetBrUncondMisp(0x00),
+        ]);
+
+        for len in &[1,2,4,8,16,32,64,128,256,512,1024,2048,4096] {
+            println!("{} branches", len);
+            let f = Self::emit(*len, 5);
+            let m = Self::emit_measure();
+            let func = m.as_fn();
+
+            for event in events.iter() {
+                let desc = event.as_desc();
+                let results = harness.measure(func,
+                    desc.id(), desc.mask(), 512, 
+                    InputMethod::Fixed(Self::TEST_ADDR, 0),
+                ).unwrap();
+                let dist = results.get_distribution();
+                let min = results.get_min();
+                let max = results.get_max();
+                println!("{:03x}:{:02x} ({:36}): min={:5} max={:5}",
+                    desc.id(),desc.mask(),desc.name(),
+                    min, max,
+                );
             }
+            println!();
         }
-
-        let mut a = args[0].align;
-        for arg in args.iter() {
-            if arg.align != a {
-                println!();
-            }
-
-            let f = Self::emit(*arg);
-            let func = f.as_fn();
-
-            //for _ in 0..8 {
-            //    let _ = harness.measure(func,
-            //        desc.id(), desc.mask(), 512, InputMethod::Fixed(0, 0)
-            //    ).unwrap();
-            //}
-           
-            let results = harness.measure(func,
-                desc.id(), desc.mask(), 512, InputMethod::Fixed(0, 0)
-            ).unwrap();
-
-            let dist = results.get_distribution();
-            let min = results.get_min();
-            let max = results.get_max();
-            println!("{:016x} num={:5} pad_align={:08x?} offset={:08x} min={} max={} dist={:?}", 
-                arg.start_addr, arg.num_padding, arg.align, arg.test_offset, min, max, dist);
-            //for chunk in results.data.chunks(32) {
-            //    println!("{:?}", chunk);
-            //}
-
-            case_res.record(event, arg.num_padding, results);
-            a = arg.align;
-        }
-        exp_results.push(case_res);
-
-        //exp_results.write_results_freq();
 
     }
 

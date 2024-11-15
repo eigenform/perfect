@@ -16,21 +16,43 @@ perfect-tremont/ - Tremont experiments
 scripts/         - Miscellaneous scripts
 ```
 
+## Experiments
+
+All of the experiments here are [sometimes very contrived] programs used to 
+demonstrate, observe, and document different microarchitectural implementation
+details. Apart from being executable, these are all written with the intention 
+of being *read* and *understood*. 
+
+Some experiments of interest for the Zen 2 microarchitecture:
+
+- [Memory Renaming Eligibility](./perfect-zen2/src/bin/memfile.rs)
+- [Store-to-Load Forwarding Eligibility](./perfect-zen2/src/bin/stlf.rs)
+- [Integer PRF Capacity](./perfect-zen2/src/bin/int.rs)
+- [FP/Vector PRF Capacity](./perfect-zen2/src/bin/fp.rs)
+- [Store Queue Capacity](./perfect-zen2/src/bin/stq.rs)
+- [Move Elimination and Zero Idioms](./perfect-zen2/src/bin/rename.rs)
+- [Branch Direction Prediction](./perfect-zen2/src/bin/bp.rs)
+- [Branch Target Prediction](./perfect-zen2/src/bin/btb.rs)
+- [Validating/Discovering PMC Events](./perfect-zen2/src/bin/pmc.rs)
+- [Observing CVE-2023-20593 (Zenbleed)](./perfect-zen2/src/bin/zenbleed.rs)
+- [Observing Speculative Loads with Timing](./perfect-zen2/src/bin/flush-reload.rs)
+
+
 ## Environment
 
 There are a bunch of scripts that you're expected to use to configure your 
 environment before running any experiments:
 
 - Most [if not all] experiments rely on the `RDPMC` instruction, which you'll 
-  need to enable with [./scripts/rdpmc.sh](./scripts/rdpmc.sh)
+  need to enable with [`./scripts/rdpmc.sh`](./scripts/rdpmc.sh)
 
 - Most [if not all] experiments are intended to be used with SMT disabled, see
-  [./scripts/smt.sh](./scripts/smt.sh)
+  [`./scripts/smt.sh`](./scripts/smt.sh)
 
 - Most [if not all]  experiments rely on `vm.mmap_min_addr` being set to zero,
   see [./scripts/low-mmap.sh](./scripts/low-mmap.sh)
 
-- [./scripts/freq.sh](./scripts/freq.sh) will disable `cpufreq` boost and 
+- [`./scripts/freq.sh`](./scripts/freq.sh) will disable `cpufreq` boost and 
   change the governor; you probably want to change this for your setup
 
 
@@ -51,8 +73,8 @@ $ sudo ./target/release/perfect-env
   vm.mmap_min_addr                        : 65536
 ```
 
-In some situations, it may also be advisable to use the following kernel 
-command-line options while using this library (where `N` is the core you 
+Most of the experiments are intended to be used while booting Linux with 
+the following kernel command-line options (where `N` is the core you 
 expect to be running experiments on):
 
 ```
@@ -62,28 +84,45 @@ isolcpus=nohz,domain,managed_irq,N nohz_full=N
 This should [mostly] prevent interrupts, and [mostly] prevent Linux from 
 scheduling tasks on the core.
 
+
+**WARNING:**
+> Under normal circumstances (*without* `isolcpus`), the Linux watchdog timer
+> relies on counter #0 being configured automatically by the `perf` subsystem. 
+>
+> Our use of the `perf-event` crate only ever configures the first available 
+> counter. This means that uses of `RDPMC` in measured code must read from 
+> counter #1. However, while using an isolated core, the watchdog timer is not 
+> configured, and measured code *must* use `RDPMC` to read from counter #0 
+> instead.
+>
+> You're expected to keep this in mind while writing experiments. 
+
+
 ## Harness Configuration
 
-The default [`HarnessConfig`](./perfect/src/harness.rs) tries to `mmap()` the 
-low 256MiB of virtual memory (from `0x0000_0000_0000_0000` to `0x0000_0000_1000_0000`). 
-This is used to simplify some things by allowing us to emit loads and stores 
-with simple immediate addressing. 
-If the `vm.mmap_min_addr` sysctl knob isn't set to zero, this will cause you
-to panic when emitting the harness.
+See [`./perfect/src/harness.rs`](./perfect/src/harness.rs) for more details. 
 
-The default configuration also pins the current process to core #15. 
-You may want to change this to something suitable for your own setup, ie.
+1. The default configuration tries allocate the low 256MiB of virtual 
+   memory (from `0x0000_0000_0000_0000` to `0x0000_0000_1000_0000`). This is 
+   used to simplify some things by allowing us to emit loads and stores with 
+   simple immediate addressing. If the `vm.mmap_min_addr` sysctl knob isn't 
+   set to zero, this will cause you to panic when emitting the harness.
 
-```rust
-use perfect::*;
+2. The default configuration tries to allocate 64MiB at virtual address 
+   `0x0000_1337_0000_0000` for emitting the harness itself.
 
-fn main() {
-    let harness = HarnessConfig::default_zen2()
-        .pinned_core(3)
-        .emit();
-    ...
-}
-```
+3. The default configuration also pins the current process to core #15.
+   You may want to change this to something suitable for your own setup, ie.
+   ```rust
+   use perfect::*;
+   
+   fn main() {
+       let harness = HarnessConfig::default_zen2()
+           .pinned_core(3)
+           .emit();
+       ...
+   }
+   ```
 
 
 ## Running Experiments
@@ -101,4 +140,5 @@ $ cargo run --release -p perfect-zen2 --bin <experiment>
 ...
 
 ```
+
 

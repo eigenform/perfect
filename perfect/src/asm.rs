@@ -28,6 +28,7 @@ use rand::Rng;
 use rand::distributions::{ Distribution, Standard };
 
 use crate::MeasuredFn;
+use crate::HarnessFn;
 
 /// Fallback/default assembler from [dynasmrt]. 
 pub type X64Assembler = Assembler<X64Relocation>;
@@ -46,11 +47,19 @@ pub struct X64AssemblerFixed {
     pub relocs: RelocRegistry<X64Relocation>,
     pub managed: ManagedRelocs<X64Relocation>,
     pub error: Option<DynasmError>,
+    pub committed: bool,
 }
 impl X64AssemblerFixed { 
 
     /// Obtain a anonymous fixed mapping at the requested address. 
+    ///
+    /// NOTE: Userspace ends at `0000_7fff_ffff_ffff`. 
+    /// See https://www.kernel.org/doc/html/latest/arch/x86/x86_64/mm.html
     fn mmap_fixed(req_addr: usize, len: usize) -> *mut u8 {
+        assert!(req_addr + len < 0x0000_7fff_ffff_ffff,
+            "Requested allocation {:016x}-{:016x} exceeds userspace limits?",
+            req_addr, req_addr + len
+        );
         let addr = std::num::NonZeroUsize::new(req_addr);
         let len  = std::num::NonZeroUsize::new(len).unwrap();
         let prot = ProtFlags::PROT_READ 
@@ -59,6 +68,7 @@ impl X64AssemblerFixed {
         let flag = MapFlags::MAP_ANONYMOUS
                  | MapFlags::MAP_PRIVATE 
                  | MapFlags::MAP_FIXED;
+                 //| MapFlags::MAP_POPULATE;
         let fd   = 0;
         let off  = 0;
         let ptr  = unsafe { 
@@ -120,17 +130,39 @@ impl X64AssemblerFixed {
             relocs: RelocRegistry::new(),
             managed: ManagedRelocs::new(),
             error: None,
+            committed: false,
         }
     }
 
-    pub fn cursor(&self) -> usize { self.ops.len() }
+    /// Return the base address for the block of emitted code. 
     pub fn base_addr(&self) -> usize { self.ptr as usize }
+
+    /// Return the last address for the block of emitted code.
     pub fn max_addr(&self) -> usize { self.base_addr() + self.len }
+
+    /// Return the current offset (in bytes). 
+    pub fn cursor(&self) -> usize { self.ops.len() }
+
+    /// Return the current virtual address. 
     pub fn cur_addr(&self) -> usize { self.base_addr() + self.cursor() }
 
+    /// Return a function pointer [MeasuredFn] to this block of emitted code.
     pub fn as_fn(&self) -> MeasuredFn {
+        assert!(self.committed);
         unsafe { std::mem::transmute(self.ptr) }
     }
+
+    pub fn as_extern_fn(&self) -> extern "C" fn(usize,usize) -> usize { 
+        assert!(self.committed);
+        unsafe { std::mem::transmute(self.ptr) }
+    }
+
+    /// Return a function pointer [HarnessFn] to this block of emitted code.
+    pub fn as_harness_fn(&self) -> HarnessFn {
+        assert!(self.committed);
+        unsafe { std::mem::transmute(self.ptr) }
+    }
+
 
     pub fn mprotect(&mut self, prot: ProtFlags) {
         unsafe { 
@@ -139,14 +171,36 @@ impl X64AssemblerFixed {
         }
     }
 
+    /// Create a new [DynamicLabel]. 
     pub fn new_dynamic_label(&mut self) -> DynamicLabel { 
         self.labels.new_dynamic_label()
     }
 
-    /// Pad with NOP until the requested address. 
+    /// Pad with 0xCC until the requested address.
+    /// Returns the number of emitted bytes.
+    pub fn pad_cc_until(&mut self, addr: usize) -> usize { 
+        if self.cur_addr() == addr { 
+            return 0;
+        }
+        assert!(addr > self.cur_addr(),
+            "Requested pad target {:016x} must be > {:016x}",
+            addr, self.cur_addr(),
+        );
+        assert!(addr <= self.max_addr(),
+            "Requested {:016x} must be <= max addr {:016x}",
+            addr, self.max_addr(),
+        );
+        let mut count = 0;
+        let num_padding = addr - self.cur_addr();
+        for _ in 0..num_padding {
+            dynasm!(self ; .bytes &[0xcc]);
+            count += 1;
+        }
+        count
+    }
+
+    /// Pad with NOP (up to the 8-byte encoding) until the requested address. 
     /// Returns the number of emitted bytes. 
-    ///
-    /// FIXME: Adjustable encoding size? 
     pub fn pad_until(&mut self, addr: usize) -> usize {
         if self.cur_addr() == addr { 
             return 0;
@@ -197,6 +251,7 @@ impl X64AssemblerFixed {
         let buf: &mut [u8]  = unsafe { 
             std::slice::from_raw_parts_mut(self.ptr as *mut u8, self.cursor())
         };
+        self.committed = true;
         buf.copy_from_slice(&self.ops);
         Ok(())
     }
@@ -509,7 +564,7 @@ pub trait Emitter: DynasmLabelApi<Relocation=X64Relocation> {
     }
 
     fn emit_lea_r64_label(&mut self, dst: u8, lab: DynamicLabel) {
-        dynasm!(self ; lea Rq(dst), [ =>lab ]);
+        dynasm!(self ; lea Rq(dst), [=>lab]);
     }
 
 
@@ -655,7 +710,7 @@ impl Emitter for X64Assembler {}
 impl Emitter for X64AssemblerFixed {}
 
 
-// Various flavors of NOP encoding [see the Family 17h SOG]
+// Various flavors of NOP encoding (these are from the AMD Family 17h SOG). 
 pub const NOP2:  [u8; 2] = [ 0x66, 0x90 ];
 pub const NOP3:  [u8; 3] = [ 0x0f, 0x1f, 0x00 ];
 pub const NOP4:  [u8; 4] = [ 0x0f, 0x1f, 0x40, 0x00 ];
@@ -664,7 +719,28 @@ pub const NOP6:  [u8; 6] = [ 0x66, 0x0f, 0x1f, 0x44, 0x00, 0x00 ];
 pub const NOP7:  [u8; 7] = [ 0x0f, 0x1f, 0x80, 0x00, 0x00, 0x00, 0x00 ];
 pub const NOP8:  [u8; 8] = [ 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00 ];
 pub const NOP9:  [u8; 9] = [ 
-    0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00 
+    0x66, 
+    0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00 
+];
+pub const NOP10:  [u8; 10] = [ 
+    0x66, 0x66, 
+    0x0F, 0x1F, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00
+];
+pub const NOP11:  [u8; 11] = [ 
+    0x66, 0x66, 0x66, 
+    0x0F, 0x1F, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00
+];
+pub const NOP12:  [u8; 12] = [ 
+    0x66, 0x66, 0x66, 0x66, 
+    0x0F, 0x1F, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00
+];
+pub const NOP13:  [u8; 13] = [ 
+    0x66, 0x66, 0x66, 0x66, 0x66, 
+    0x0F, 0x1F, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00
+];
+pub const NOP14:  [u8; 14] = [ 
+    0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 
+    0x0F, 0x1F, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00
 ];
 pub const NOP15: [u8; 15] = [ 
     0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 

@@ -125,6 +125,15 @@ impl <I> MispredictedReturnOptions<I> {
 
 /// Template for emitting code in the shadow of a costly mispredicted branch.
 ///
+/// This is a useful tool for writing microbenchmarks - especially when trying
+/// to measure the capacity of different microarchitectural resources. 
+/// Historically, most examples of this use very slow loads for generating 
+/// latency.
+///
+/// In this case, we generate substantial latency by causing a misprediction 
+/// and deferring resolution of the target address for as long as possible
+/// by creating a dependency on a very slow load. 
+///
 /// Notes on Physical Register Use
 /// ==============================
 ///

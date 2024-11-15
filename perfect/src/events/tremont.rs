@@ -1,7 +1,7 @@
 
 use crate::events::*;
 
-#[derive(PartialOrd, Ord, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialOrd, Ord, PartialEq, Eq)]
 pub enum TopdownBeBoundMask {
     All,
     AllocRestrictions,
@@ -27,7 +27,7 @@ impl TopdownBeBoundMask {
     }
 }
 
-#[derive(PartialOrd, Ord, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialOrd, Ord, PartialEq, Eq)]
 pub enum BrMispMask {
     IndCall,
     Jcc,
@@ -51,7 +51,7 @@ impl BrMispMask {
 
 
 
-#[derive(PartialOrd, Ord, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialOrd, Ord, PartialEq, Eq)]
 pub enum TremontEvent { 
     TopdownBeBound(TopdownBeBoundMask),
     BrMisp(BrMispMask),
@@ -64,6 +64,9 @@ pub enum TremontEvent {
     Unk(u16, u8, &'static str)
 }
 impl AsEventDesc for TremontEvent {
+    fn unk_desc(id: u16, mask: u8) -> Self { 
+        Self::Unk(id, mask, "")
+    }
     fn as_desc(&self) -> EventDesc { 
         match self { 
             Self::TopdownBeBound(m) => {

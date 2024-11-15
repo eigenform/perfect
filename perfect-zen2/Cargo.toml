@@ -10,3 +10,8 @@ edition = "2021"
 rand = "0.8.5"
 itertools = "0.11.0"
 perfect = { path = "../perfect" }
+clap = { version = "4.5.13", features = ["derive"] }
+perf-event = { git = "https://github.com/eigenform/perf-event", branch = "raw-event" }
+
+[lints]
+workspace = true

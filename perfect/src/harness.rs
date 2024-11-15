@@ -16,13 +16,15 @@ use dynasmrt::{
     x64::X64Relocation
 };
 use crate::util;
-use crate::asm::{ X64Assembler, Emitter, Gpr, VectorGpr };
+use crate::asm::{ X64Assembler, X64AssemblerFixed, Emitter, Gpr, VectorGpr, };
+use crate::asm::{ NOP6, NOP8 };
 
 /// Type of a function eligible for measurement via [`PerfectHarness`].
-pub type MeasuredFn = fn(usize, usize) -> usize;
+pub type MeasuredFn = extern "C" fn(usize, usize) -> usize;
 
 /// Type of the harness function associated with [`PerfectHarness`].
-pub type HarnessFn = fn(rdi: usize, rsi: usize, measured_fn: usize) -> usize;
+pub type HarnessFn = extern "C" fn(rdi: usize, rsi: usize, measured_fn: usize)
+    -> usize;
 
 /// Auto-implemented on function types that are suitable for generating
 /// input to a measured function.
@@ -44,15 +46,16 @@ impl <F: Fn(&mut ThreadRng, usize) -> (usize, usize)>
 /// Strategy used by [PerfectHarness] to compute the set of inputs to the
 /// measured function across all test runs.
 pub enum InputMethod<'a> {
-    /// Fix the value of both arguments across all test runs.
+    /// Fix the value of both arguments (RDI and RSI) across all test runs.
     Fixed(usize, usize),
 
-    /// Provide a function/closure which computes the arguments by using:
+    /// Provide a function/closure which computes the arguments (RDI and RSI)
+    /// by using:
     /// - A mutable reference to the [`ThreadRng`] owned by the harness
     /// - The index of the current test run
     Random(&'static dyn Fn(&mut ThreadRng, usize) -> (usize, usize)),
 
-    /// Provide a precomputed list of arguments.
+    /// Provide a precomputed list of arguments (RDI and RSI).
     List(&'a Vec<(usize, usize)>),
 }
 
@@ -82,8 +85,8 @@ impl GprState {
     pub fn rbp(&self) -> usize { self.0[5] }
     pub fn rsi(&self) -> usize { self.0[6] }
     pub fn rdi(&self) -> usize { self.0[7] }
-    pub fn r8(&self) -> usize { self.0[8] }
-    pub fn r9(&self) -> usize { self.0[9] }
+    pub fn r8(&self)  -> usize { self.0[8] }
+    pub fn r9(&self)  -> usize { self.0[9] }
     pub fn r10(&self) -> usize { self.0[10] }
     pub fn r11(&self) -> usize { self.0[11] }
     pub fn r12(&self) -> usize { self.0[12] }
@@ -122,16 +125,16 @@ impl VectorGprState {
     pub fn new() -> Self { Self([[0; 4]; 16]) }
     pub fn clear(&mut self) { self.0 = [[0; 4]; 16] }
     pub fn read_vgpr(&self, vgpr: VectorGpr) -> [u64; 4] { self.0[vgpr as usize] }
-    pub fn ymm0(&self) -> [u64; 4] { self.0[0] }
-    pub fn ymm1(&self) -> [u64; 4] { self.0[1] }
-    pub fn ymm2(&self) -> [u64; 4] { self.0[2] }
-    pub fn ymm3(&self) -> [u64; 4] { self.0[3] }
-    pub fn ymm4(&self) -> [u64; 4] { self.0[4] }
-    pub fn ymm5(&self) -> [u64; 4] { self.0[5] }
-    pub fn ymm6(&self) -> [u64; 4] { self.0[6] }
-    pub fn ymm7(&self) -> [u64; 4] { self.0[7] }
-    pub fn ymm8(&self) -> [u64; 4] { self.0[8] }
-    pub fn ymm9(&self) -> [u64; 4] { self.0[9] }
+    pub fn ymm0(&self)  -> [u64; 4] { self.0[0] }
+    pub fn ymm1(&self)  -> [u64; 4] { self.0[1] }
+    pub fn ymm2(&self)  -> [u64; 4] { self.0[2] }
+    pub fn ymm3(&self)  -> [u64; 4] { self.0[3] }
+    pub fn ymm4(&self)  -> [u64; 4] { self.0[4] }
+    pub fn ymm5(&self)  -> [u64; 4] { self.0[5] }
+    pub fn ymm6(&self)  -> [u64; 4] { self.0[6] }
+    pub fn ymm7(&self)  -> [u64; 4] { self.0[7] }
+    pub fn ymm8(&self)  -> [u64; 4] { self.0[8] }
+    pub fn ymm9(&self)  -> [u64; 4] { self.0[9] }
     pub fn ymm10(&self) -> [u64; 4] { self.0[10] }
     pub fn ymm11(&self) -> [u64; 4] { self.0[11] }
     pub fn ymm12(&self) -> [u64; 4] { self.0[12] }
@@ -253,6 +256,9 @@ pub struct HarnessConfig {
     /// The target platform
     platform: TargetPlatform,
 
+    harness_addr: usize,
+    harness_size: usize,
+
     /// Optionally dump the integer general-purpose registers before exiting
     /// from the harness. 
     dump_gpr: bool,
@@ -271,7 +277,7 @@ pub struct HarnessConfig {
     /// Optionally allocate a fixed memory region for use by measured code.
     arena_alloc: Option<(usize, usize)>, 
 
-    /// Optionally flush the BTB with some number of unconditional jumps.
+    /// Optionally [try to] flush the BTB. 
     flush_btb: Option<usize>,
 
     /// The strategy for zeroing integer general-purpose registers before 
@@ -284,9 +290,18 @@ pub struct HarnessConfig {
 }
 
 impl HarnessConfig {
+
+    /// Default base address for the harness. 
+    const DEFAULT_ADDR: usize = 0x0000_1337_0000_0000;
+
+    /// Default allocation size for the harness (64MiB)
+    const DEFAULT_SIZE: usize = 0x0000_0000_0400_0000;
+
     pub fn default_zen2() -> Self { 
         Self {
             pinned_core: Some(15),
+            harness_addr: Self::DEFAULT_ADDR,
+            harness_size: Self::DEFAULT_SIZE,
             arena_alloc: Some((0x0000_0000, 0x1000_0000)),
             dump_gpr: false,
             dump_vgpr: false,
@@ -301,6 +316,8 @@ impl HarnessConfig {
     pub fn default_tremont() -> Self { 
         Self {
             pinned_core: Some(15),
+            harness_addr: Self::DEFAULT_ADDR,
+            harness_size: Self::DEFAULT_SIZE,
             arena_alloc: Some((0x0000_0000, 0x1000_0000)),
             dump_gpr: false,
             dump_vgpr: false,
@@ -314,6 +331,15 @@ impl HarnessConfig {
 }
 
 impl HarnessConfig {
+    pub fn harness_addr(mut self, addr: usize) -> Self { 
+        self.harness_addr = addr;
+        self
+    }
+    pub fn harness_size(mut self, size: usize) -> Self { 
+        self.harness_size = size;
+        self
+    }
+
     pub fn dump_gpr(mut self, x: bool) -> Self {
         self.dump_gpr = x;
         self
@@ -328,6 +354,7 @@ impl HarnessConfig {
         self.pinned_core = x;
         self
     }
+
     pub fn arena_alloc(mut self, base: usize, len: usize) -> Self {
         self.arena_alloc = Some((base, len));
         self
@@ -365,6 +392,7 @@ impl HarnessConfig {
     pub fn emit(self) -> PerfectHarness {
         if let Some(pinned_core) = self.pinned_core {
             util::PerfectEnv::pin_to_core(pinned_core);
+            println!("[*] Pinned to core {}", pinned_core);
         }
         if let Some((base, len)) = self.arena_alloc {
             let mmap_min_addr = util::PerfectEnv::procfs_mmap_min_addr();
@@ -384,15 +412,31 @@ impl HarnessConfig {
 
 /// Harness used to configure PMCs and call into measured code.
 ///
-/// See [PerfectHarness::emit] for more details about the binary interface.
+/// **NOTE:** Since there's some overhead associated with setting up and 
+/// managing all of the state associated with this structure: this may be too 
+/// heavy-handed for certain cases.
+///
+/// See [PerfectHarness::emit] for more details about the binary interface
+/// (ie. how input is passed from the harness to measured code, etc). 
+///
+/// Virtual Addressing
+/// ==================
+///
+/// The actual harness code is implemented with [X64AssemblerFixed]. 
+/// This is emitted during runtime when calling [PerfectHarness::new]. 
+///
+/// By default, we allocate 64MiB at `0x0000_1337_0000_0000` for emitting the 
+/// harness code. Users are expected to be aware of this reservation when
+/// using [X64AssemblerFixed] for emitting tests.
 ///
 /// Handling PMCs
 /// =============
 ///
-/// The harness *starts* counting for a particular PMC, but it does not
-/// read the counters by itself. Instead, measured code (provided by the user) 
-/// is expected to use the `RDPMC` instruction for reading the counters at a 
-/// particular point in time during a test.
+/// The harness *starts* counting for a particular PMC by interacting with 
+/// the 'perf' subsystem, but it does not read the counters by itself. 
+/// Instead, measured code (provided by the user) is expected to use the 
+/// `RDPMC` instruction for reading the counters at a particular point in 
+/// time during a test.
 ///
 /// Measured code is expected to return the number of observed events
 /// (ie. after taking the difference between two uses of `RDPMC`).
@@ -402,9 +446,11 @@ pub struct PerfectHarness {
 
     // Backing allocation with emitted code implementing the harness.
     // Created after [PerfectHarness::emit] is called.
-    harness_buf: Option<ExecutableBuffer>,
+    //harness_buf: Option<ExecutableBuffer>,
+    //harness_fn: Option<HarnessFn>,
 
-    harness_fn: Option<HarnessFn>,
+    /// Fixed backing allocation for emitted code implementing the harness. 
+    assembler: X64AssemblerFixed,
 
     /// Saved stack pointer (for exiting the harness). 
     pub harness_state: Box<[u64; 16]>,
@@ -435,9 +481,11 @@ impl PerfectHarness {
         let mut harness_stack = Box::new(HarnessStack::new());
         let mut gpr_state = Box::new(GprState::new());
 
+        let assembler = X64AssemblerFixed::new(
+            cfg.harness_addr, cfg.harness_size
+        );
         let mut res = Self {
-            harness_buf: None,
-            harness_fn: None,
+            assembler,
             cfg,
             pmc_use: true,
             rng: rand::thread_rng(),
@@ -457,11 +505,11 @@ impl PerfectHarness {
 
     /// Print disassembly for the entire harness. 
     pub fn disas(&self) {
-        if let Some(buf) = &self.harness_buf {
-            crate::util::disas(&buf, AssemblyOffset(0), None);
-        }
+        self.assembler.disas(AssemblyOffset(0), None);
+        //if let Some(buf) = &self.harness_buf {
+        //    crate::util::disas(&buf, AssemblyOffset(0), None);
+        //}
     }
-
 
     /// Emit the actual harness function during runtime.
     ///
@@ -477,13 +525,19 @@ impl PerfectHarness {
     /// - Measured functions are expected to end with a return instruction.
     /// - Measured functions are expected to return a result in RAX.
     ///
+    /// FIXME: You probably want to implement this with [X64AssemblerFixed] 
+    /// instead of the default one. This means that the use of addresses 
+    /// leading up to measured code is more likely to be deterministic 
+    /// (which might matter if you're trying to, for instance, prepare some 
+    /// branch predictor state before reaching measured code). 
+    ///
     fn emit(&mut self) {
-        let mut harness = X64Assembler::new().unwrap();
+        //let mut harness = X64Assembler::new().unwrap();
 
         let state_ptr = self.harness_state.as_ptr();
         let stack_ptr = self.harness_stack.as_ptr();
 
-        dynasm!(harness
+        dynasm!(self.assembler
             ; .arch     x64
 
             // Save nonvolatile registers
@@ -523,7 +577,7 @@ impl PerfectHarness {
         match self.cfg.zero_strat {
             // Emit a zero idiom for each register we need to clear.
             ZeroStrategy::XorIdiom => {
-                dynasm!(harness
+                dynasm!(self.assembler
                     ; xor rax, rax
                     ; xor rcx, rcx
                     ; xor rdx, rdx
@@ -542,7 +596,7 @@ impl PerfectHarness {
             // Emit a single zero idiom for one register, and then rename 
             // all of the other registers to it.
             ZeroStrategy::MovFromZero => {
-                dynasm!(harness
+                dynasm!(self.assembler
                     ; xor rax, rax
                     ; mov rcx, rax
                     ; mov rdx, rax
@@ -563,12 +617,12 @@ impl PerfectHarness {
 
         match self.cfg.zero_strat_fp {
             ZeroStrategyFp::Vzeroall => {
-                dynasm!(harness
+                dynasm!(self.assembler
                     ; vzeroall
                 );
             },
             ZeroStrategyFp::XorIdiom => {
-                dynasm!(harness
+                dynasm!(self.assembler
                     ; vpxor ymm0, ymm0, ymm0
                     ; vpxor ymm1, ymm1, ymm1
                     ; vpxor ymm2, ymm2, ymm2
@@ -588,7 +642,7 @@ impl PerfectHarness {
                 );
             },
             ZeroStrategyFp::MovFromZero => {
-                dynasm!(harness
+                dynasm!(self.assembler
                     ; vpxor ymm0, ymm0, ymm0
                     ; vmovdqu ymm1, ymm0
                     ; vmovdqu ymm2, ymm0
@@ -613,14 +667,23 @@ impl PerfectHarness {
         // Optionally attempt to flush the BTB with some number of 
         // unconditional branches before entering measured code. 
         // Clobbers RAX and flags.
+        //
+        // FIXME: Uhhh what are you trying to do here anyway? Redo this. 
         if let Some(num) = self.cfg.flush_btb {
-            dynasm!(harness
-                ; cmp rax, 1
+            dynasm!(self.assembler
+                ; .align 64
             );
             for _ in 0..num {
-                let lab = harness.new_dynamic_label();
-                dynasm!(harness
-                    ; je BYTE >lab
+                dynasm!(self.assembler
+                    ; jmp BYTE >lab
+                    ; .bytes NOP8
+                    ; .bytes NOP8
+                    ; .bytes NOP8
+                    ; .bytes NOP8
+                    ; .bytes NOP8
+                    ; .bytes NOP8
+                    ; .bytes NOP8
+                    ; .bytes NOP6
                     ; lab:
                 );
             }
@@ -629,20 +692,20 @@ impl PerfectHarness {
         // Optionally use RDI to prepare the initial state of the flags
         // before entering measured code.
         if let Some(val) = self.cfg.cmp_rdi {
-            dynasm!(harness
+            dynasm!(self.assembler
                 ; cmp rdi, val
             );
         }
 
         // Indirectly call the tested function
-        dynasm!(harness
+        dynasm!(self.assembler
             ; call r15
             ; lfence
         );
 
         // Optionally capture the GPRs after exiting measured code.
         if self.cfg.dump_gpr {
-            dynasm!(harness
+            dynasm!(self.assembler
                 ; mov r15, QWORD self.gpr_state.0.as_ptr() as _
                 ; mov [r15 + 0x00], rax
                 ; mov [r15 + 0x08], rcx
@@ -666,7 +729,7 @@ impl PerfectHarness {
 
         // Optionally dump vector registers after exiting measured code
         if self.cfg.dump_vgpr {
-            dynasm!(harness
+            dynasm!(self.assembler
                 ; mov r15, QWORD self.vgpr_state.0.as_ptr() as _
                 ; vmovupd [r15 + 0x00], ymm0
                 ; vmovupd [r15 + 0x20], ymm1
@@ -688,7 +751,7 @@ impl PerfectHarness {
             );
         }
 
-        dynasm!(harness
+        dynasm!(self.assembler
             // Restore the stack pointer
             ; mov rcx, QWORD state_ptr as _
             ; mov rsp, [rcx]
@@ -704,17 +767,28 @@ impl PerfectHarness {
             ; ret
         );
 
-        let harness_buf = harness.finalize().unwrap();
-        let harness_fn: HarnessFn = unsafe {
-            std::mem::transmute(harness_buf.ptr(AssemblyOffset(0)))
-        };
-        self.harness_buf = Some(harness_buf);
-        self.harness_fn  = Some(harness_fn);
+        self.assembler.commit().unwrap();
+
+        //let harness_buf = harness.finalize().unwrap();
+        //let harness_fn: HarnessFn = unsafe {
+        //    std::mem::transmute(harness_buf.ptr(AssemblyOffset(0)))
+        //};
+        //self.harness_buf = Some(harness_buf);
+        //self.harness_fn  = Some(harness_fn);
     }
 }
 
 
 impl PerfectHarness {
+
+    // NOTE: The kernel configures PMC counter 0 for counting cycles and uses
+    // it for its own purposes (IIRC for interrupt timing?). This is annoying 
+    // because most of the code here is written to read from counter 0,
+    // and if you forget to boot with isolcpus=, all measurements using it 
+    // will just return elapsed cycles. 
+    //
+    // It would be nice to detect when this is the case and automatically 
+    // handle this in cases where you aren't using isolcpus=. 
 
     /// Resolve the actual index of the hardware counter being used by 'perf'.
     //unsafe fn resolve_hw_pmc_idx(ctr: &Counter) -> usize {
@@ -735,14 +809,14 @@ impl PerfectHarness {
     //}
 
     /// Generate the config bits for the raw perf_event (Intel).
-    fn make_cfg_intel(event: u8, mask: u8) -> u64 { 
+    pub fn make_cfg_intel(event: u8, mask: u8) -> u64 { 
         let event_num = event as u64;
         let mask_num = mask as u64;
         (mask_num << 8) | event_num
     }
 
     /// Generate the config bits for the raw perf_event (AMD).
-    fn make_cfg_amd(event: u16, mask: u8) -> u64 {
+    pub fn make_cfg_amd(event: u16, mask: u8) -> u64 {
         let event_num = event as u64 & 0b1111_1111_1111;
         let event_lo  = event_num & 0b0000_1111_1111;
         let event_hi  = (event_num & 0b1111_0000_0000) >> 8;
@@ -780,7 +854,16 @@ impl PerfectHarness {
         inputs
     }
 
-    /// Run/measure the provided function with the harness. 
+    /// Run the provided function with the harness.
+    pub fn call(&mut self, rdi: usize, rsi: usize, measured_fn: MeasuredFn) 
+        -> usize
+    { 
+        let harness_fn = self.assembler.as_harness_fn();
+        let res = harness_fn(rdi, rsi, measured_fn as usize);
+        return res
+    }
+
+    /// Run and *measure* the provided function with the harness. 
     pub fn measure(&mut self,
         measured_fn: MeasuredFn,
         event: u16,
@@ -790,7 +873,8 @@ impl PerfectHarness {
    ) -> Result<MeasureResults, &str>
     {
         let inputs = self.generate_inputs(iters, input);
-        let harness_fn = self.harness_fn.unwrap();
+        //let harness_fn = self.harness_fn.unwrap();
+        let harness_fn = self.assembler.as_harness_fn();
 
         // Allocate for output data produced while running the harness
         let mut results = vec![0; iters];
@@ -860,4 +944,92 @@ impl PerfectHarness {
 
 }
 
+// NOTE: It would be really nice to have some way of catching faults from 
+// measured code ..
+
+//static mut FAULT_INFO: *mut nix::libc::siginfo_t = std::ptr::null_mut();
+//static mut RECOVERY_POINT: *mut nix::libc::ucontext_t = std::ptr::null_mut();
+//static mut LAST_ERROR_SIGNAL: i32 = 0;
+//extern "C" fn recover_from_hardware_error(
+//    signal: i32,
+//    info: *mut nix::libc::siginfo_t,
+//    voidctx: *mut std::ffi::c_void,
+//) {
+//    unsafe { 
+//        LAST_ERROR_SIGNAL = signal;
+//        FAULT_INFO = info;
+//        nix::libc::setcontext(RECOVERY_POINT);
+//        unreachable!("uhhhh");
+//    }
+//}
+//
+//impl PerfectHarness {
+//    pub fn register_signal_handler(&mut self) {
+//        use nix::sys::signal;
+//        use nix::sys::signal::Signal;
+//        use nix::libc::{setcontext, getcontext};
+//
+//        // unblock signal
+//        let mut sigset = signal::SigSet::empty();
+//        sigset.add(signal::SIGILL);
+//        signal::sigprocmask(signal::SigmaskHow::SIG_UNBLOCK, Some(&sigset), None)
+//            .unwrap();
+//
+//        // install handler
+//        unsafe { 
+//            signal::sigaction(
+//                signal::SIGILL, 
+//                &signal::SigAction::new(
+//                    signal::SigHandler::SigAction(recover_from_hardware_error),
+//                    (signal::SaFlags::SA_NODEFER | signal::SaFlags::SA_SIGINFO),
+//                    signal::SigSet::empty(),
+//                )
+//            ).unwrap();
+//            LAST_ERROR_SIGNAL = 0;
+//        }
+//
+//        // Set our recovery point
+//        unsafe { 
+//            RECOVERY_POINT = Box::leak(
+//                Box::<nix::libc::ucontext_t>::new(std::mem::zeroed())
+//            );
+//            FAULT_INFO = Box::leak(
+//                Box::<nix::libc::siginfo_t>::new(std::mem::zeroed())
+//            );
+//
+//            nix::libc::getcontext(RECOVERY_POINT);
+//        }
+//        unsafe { 
+//            if LAST_ERROR_SIGNAL != 0 {
+//                println!("{:x?}", (*FAULT_INFO));
+//                println!("{:x?}", (*FAULT_INFO).si_addr());
+//                return;
+//            }
+//        }
+//
+//        // Do something dangerous
+//        unsafe { 
+//            core::arch::asm!("mov rax, #0xdead");
+//            core::arch::asm!("mov rbx, #0xdead");
+//            core::arch::asm!("mov rcx, #0xdead");
+//            core::arch::asm!("mov rdx, #0xdead");
+//            core::arch::asm!("mov rdi, #0xdead");
+//            core::arch::asm!("mov rsi, #0xdead");
+//            core::arch::asm!("ud2");
+//        }
+//
+//
+//        // restore default handler
+//        unsafe {
+//            signal::sigaction(
+//                signal::SIGILL, 
+//                &signal::SigAction::new(
+//                    signal::SigHandler::SigDfl,
+//                    signal::SaFlags::empty(),
+//                    signal::SigSet::empty(),
+//                )
+//            ).unwrap();
+//        }
+//    }
+//}
 

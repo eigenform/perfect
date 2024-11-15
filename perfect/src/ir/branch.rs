@@ -17,6 +17,7 @@ pub use dynasmrt::{
 #[derive(Clone)]
 pub struct BranchSet {
     pub data: Vec<BranchDesc>,
+    pub align: Option<Align>,
 }
 impl BranchSet {
 
@@ -34,7 +35,7 @@ impl BranchSet {
             addr += align.value();
             tgt += align.value();
         }
-        Self { data }
+        Self { data, align: Some(align) }
     }
 
     /// Generate a set of uniformly-spaced branches sharing the same 
@@ -57,8 +58,28 @@ impl BranchSet {
             addr += align.value();
             tgt += align.value();
         }
-        Self { data }
+        Self { data, align: Some(align) }
     }
+
+    pub fn size(&self) -> usize { 
+        self.last().unwrap().tgt - self.first().unwrap().addr
+    }
+
+    pub fn align(&self) -> Option<Align> {
+        self.align
+    }
+
+    /// Create an empty [BranchSet]. 
+    pub fn new() -> Self { 
+        Self { data: Vec::new(), align: None }
+    }
+
+    /// Add a [BranchDesc] to this set. 
+    pub fn push(&mut self, desc: BranchDesc) {
+        self.data.push(desc);
+    }
+
+    pub fn len(&self) -> usize { self.data.len() }
 
 
     pub fn first(&self) -> Option<&BranchDesc> {
@@ -99,10 +120,20 @@ impl BranchDesc {
         self.tgt - self.addr
     }
 
+    pub fn size(&self) -> usize { 
+        self.tgt - self.addr
+    }
+
+
     pub fn emit_jmp_direct(&self, f: &mut X64AssemblerFixed) {
+        assert!(f.cur_addr() <= self.addr);
         f.pad_until(self.addr);
         let lab = f.new_dynamic_label();
-        dynasm!(f ; jmp =>lab);
+        if self.offset() < 128 {
+            dynasm!(f ; jmp BYTE =>lab);
+        } else {
+            dynasm!(f ; jmp =>lab);
+        }
         f.pad_until(self.tgt);
         f.place_dynamic_label(lab);
     }

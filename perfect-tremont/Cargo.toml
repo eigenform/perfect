@@ -9,3 +9,6 @@ edition = "2021"
 
 rand = "0.8.5"
 perfect = { path = "../perfect" }
+
+[lints]
+workspace = true

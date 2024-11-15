@@ -3,6 +3,8 @@
 use perfect::*;
 use perfect::events::*;
 use rand::prelude::*;
+use rand::distributions::Uniform;
+use std::collections::*;
 
 fn main() {
     let mut harness = HarnessConfig::default_zen2().emit();
@@ -43,12 +45,12 @@ impl Experiment<usize> for MemfileDisplacement {
         let mut f = X64Assembler::new().unwrap();
         let addr = 0x0000_0000 | (1 << bit);
 
-        f.emit_rdpmc_start(1, Gpr::R15 as u8);
+        f.emit_rdpmc_start(0, Gpr::R15 as u8);
         dynasm!(f
             ; mov [addr], eax
             ; mov ebx, [addr]
         );
-        f.emit_rdpmc_end(1, Gpr::R15 as u8, Gpr::Rax as u8);
+        f.emit_rdpmc_end(0, Gpr::R15 as u8, Gpr::Rax as u8);
         f.emit_ret();
         f.commit().unwrap();
         f
@@ -104,12 +106,14 @@ impl Experiment<usize> for MemfileDisplacement {
 /// 3. Emit a load which matches the initial store. 
 ///
 /// Emit some variable number of stores (up to the store queue capacity), 
-/// and then a load that we expect to 
+/// and then a load that we expect to hit in the memory file. 
 ///
 /// Results
 /// =======
 ///
 /// Only the most-recent 6 stores are eligible for memory renaming. 
+/// 'MemFileHit', 'MemRenLdDsp', and 'MemRenLdElim' do not occur for loads
+/// matching older stores. 
 ///
 pub struct MemfileWindow;
 impl Experiment<usize> for MemfileWindow {
@@ -122,17 +126,19 @@ impl Experiment<usize> for MemfileWindow {
         addrs.shuffle(&mut rng);
         assert!(idx <= 47);
 
-        f.emit_rdpmc_start(1, Gpr::R15 as u8);
+        f.emit_rdpmc_start(0, Gpr::R15 as u8);
 
+        // Fill the store queue
         for addr in &addrs[0..=47] {
             dynasm!(f; mov [*addr], rax);
         }
 
+        // Generate a load expected to hit in the memory file
         let addr = addrs[idx];
         dynasm!(f
             ; mov rbx, [addr]
         );
-        f.emit_rdpmc_end(1, Gpr::R15 as u8, Gpr::Rax as u8);
+        f.emit_rdpmc_end(0, Gpr::R15 as u8, Gpr::Rax as u8);
         f.emit_ret();
         f.commit().unwrap();
         f
@@ -169,8 +175,5 @@ impl Experiment<usize> for MemfileWindow {
         println!();
     }
 }
-
-
-
 
 

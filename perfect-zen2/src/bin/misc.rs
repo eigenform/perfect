@@ -5,8 +5,8 @@ use rand::distributions::{Distribution, Standard};
 
 use itertools::*;
 
-use perfect::stats::*;
 use perfect::*;
+use perfect::stats::*;
 use perfect::events::*;
 
 pub enum FuzzIR {
@@ -153,6 +153,7 @@ pub struct FuzzArgs {
     pub pre_emit: fn(&mut X64Assembler),
     pub spec_emit: fn(&mut X64Assembler),
     pub post_emit: fn(&mut X64Assembler),
+    pub events: EventSet<Zen2Event>,
 }
 
 
@@ -175,7 +176,7 @@ impl Fuzz {
 
         let x = thread_rng().gen::<FuzzIR>();
 
-        f.emit_rdpmc_start(1, Gpr::R15 as u8);
+        f.emit_rdpmc_start(0, Gpr::R15 as u8);
         let lab = f.new_dynamic_label();
         dynasm!(f
             ; mov Rq(Self::SRC1_RQ), 0x1111_1111
@@ -201,7 +202,7 @@ impl Fuzz {
         f.place_dynamic_label(lab);
         (args.post_emit)(&mut f);
 
-        f.emit_rdpmc_end(1, Gpr::R15 as u8, Gpr::Rax as u8);
+        f.emit_rdpmc_end(0, Gpr::R15 as u8, Gpr::Rax as u8);
         f.emit_ret();
         f.commit().unwrap();
         f
@@ -217,6 +218,9 @@ impl Fuzz {
             //},
             FuzzArgs { 
                 name: "Wuhhhh",
+                events: EventSet::new_from_slice(&[
+                    Zen2Event::MemFileHit(0x00),
+                ]),
                 pre_emit: |mut f| { 
                     dynasm!(f
                         ; mov [0x0000_0288], Rq(Self::SRC1_RQ)
@@ -293,13 +297,12 @@ impl Fuzz {
 
 
 
-
 fn main() {
     let mut harness = HarnessConfig::default_zen2()
         .dump_gpr(true)
         .emit();
     //harness.set_pmc_use(false);
     Fuzz::run(&mut harness);
-
 }
+
 

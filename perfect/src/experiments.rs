@@ -1,6 +1,7 @@
 
 pub mod template;
 pub mod branch;
+pub mod pmcdisc;
 
 use crate::asm::*;
 use crate::harness::*;

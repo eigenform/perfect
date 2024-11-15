@@ -60,7 +60,7 @@ impl StlfStoreQueueCapacity {
             ; .align 4096
         );
 
-        f.emit_rdpmc_start(1, Gpr::R15 as u8);
+        f.emit_rdpmc_start(0, Gpr::R15 as u8);
 
         // Store we expect to be forwarded
         dynasm!(f ; mov [rbx], rax );
@@ -76,7 +76,7 @@ impl StlfStoreQueueCapacity {
         // Target load whose result we expect to be forwarded
         dynasm!(f ; mov rax, [0x0001_0000]);
 
-        f.emit_rdpmc_end(1, Gpr::R15 as u8, Gpr::Rax as u8);
+        f.emit_rdpmc_end(0, Gpr::R15 as u8, Gpr::Rax as u8);
         f.emit_ret();
         f.commit().unwrap();
         f
@@ -158,7 +158,7 @@ impl StlfEligibility {
             ; sfence
             ; lfence
         );
-        f.emit_rdpmc_start(1, Gpr::R15 as u8);
+        f.emit_rdpmc_start(0, Gpr::R15 as u8);
 
         dynasm!(f 
             ; mov [0x0001_0000], al // Store
@@ -166,7 +166,7 @@ impl StlfEligibility {
             ; mov bl, [0x0001_0000] // Load
         );
 
-        f.emit_rdpmc_end(1, Gpr::R15 as u8, Gpr::Rax as u8);
+        f.emit_rdpmc_end(0, Gpr::R15 as u8, Gpr::Rax as u8);
         f.emit_ret();
         f.commit().unwrap();
         f
