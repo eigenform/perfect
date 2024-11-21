@@ -575,6 +575,14 @@ pub trait Emitter: DynasmLabelApi<Relocation=X64Relocation> {
     fn emit_fnop_sled(&mut self, n: usize) {
         for _ in 0..n { dynasm!(self ; fnop) }
     }
+    fn emit_jmp_byte_sled(&mut self, n: usize) {
+        for _ in 0..n {
+            dynasm!(self
+                ; jmp BYTE >label
+                ; label:
+            );
+        }
+    }
     fn emit_jmp_sled(&mut self, n: usize) {
         for _ in 0..n {
             dynasm!(self
@@ -583,6 +591,7 @@ pub trait Emitter: DynasmLabelApi<Relocation=X64Relocation> {
             );
         }
     }
+
 
     fn emit_dis_pad_i5(&mut self) {
         dynasm!(self ; nop ; nop ; nop ; nop ; nop);

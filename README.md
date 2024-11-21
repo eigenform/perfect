@@ -23,16 +23,29 @@ demonstrate, observe, and document different microarchitectural implementation
 details. Apart from being executable, these are all written with the intention 
 of being *read* and *understood*. 
 
-Some experiments of interest for the Zen 2 microarchitecture:
+Note that most of the interesting experiments here are probably only relevant
+for the Zen 2 microarchitecture (and potentially later Zen iterations). 
+
+### Optimizations
 
 - [Memory Renaming Eligibility](./perfect-zen2/src/bin/memfile.rs)
 - [Store-to-Load Forwarding Eligibility](./perfect-zen2/src/bin/stlf.rs)
+- [Move Elimination and Zero Idioms](./perfect-zen2/src/bin/rename.rs)
+
+### Resources
+
 - [Integer PRF Capacity](./perfect-zen2/src/bin/int.rs)
 - [FP/Vector PRF Capacity](./perfect-zen2/src/bin/fp.rs)
 - [Store Queue Capacity](./perfect-zen2/src/bin/stq.rs)
-- [Move Elimination and Zero Idioms](./perfect-zen2/src/bin/rename.rs)
+
+### Predictors
+
 - [Branch Direction Prediction](./perfect-zen2/src/bin/bp.rs)
 - [Branch Target Prediction](./perfect-zen2/src/bin/btb.rs)
+- [Direction Predictor Stimulus/Response](./perfect-zen2/src/bin/bp-pattern.rs)
+
+### Miscellania
+
 - [Validating/Discovering PMC Events](./perfect-zen2/src/bin/pmc.rs)
 - [Observing CVE-2023-20593 (Zenbleed)](./perfect-zen2/src/bin/zenbleed.rs)
 - [Observing Speculative Loads with Timing](./perfect-zen2/src/bin/flush-reload.rs)
