@@ -1,21 +1,21 @@
 
 use perfect::*;
 use perfect::events::*;
-use perfect::stats::*;
 use rand::prelude::*;
+use perfect::stats::*;
 use perfect::asm::Emitter;
 
 fn main() {
     let mut harness = HarnessConfig::default_zen2().emit();
-    StoreQueueCapacity::run(&mut harness);
+    LoadQueueCapacity::run(&mut harness);
 }
 
-/// Create store queue pressure. 
+/// Create load queue pressure. 
 ///
 /// Explanation
 /// ===========
 ///
-/// The store queue keeps track of the addresses/values of recent stores. 
+/// The load queue keeps track of the addresses/values of recent stores. 
 /// The Family 17h SOG mentions that the store queue capacity is 48 entries. 
 ///
 /// Test
@@ -30,49 +30,51 @@ fn main() {
 ///
 /// Stall cycles observed when we perform more than 48 stores. 
 ///
-pub struct StoreQueueCapacity;
-impl MispredictedReturnTemplate<usize> for StoreQueueCapacity {}
-impl StoreQueueCapacity {
+pub struct LoadQueueCapacity;
+impl MispredictedReturnTemplate<usize> for LoadQueueCapacity {}
+impl LoadQueueCapacity {
 
     const CASES: StaticEmitterCases<usize> = StaticEmitterCases::new(&[
-        EmitterDesc { desc: "mov [imm], r64", 
+        EmitterDesc { desc: "mov r64, [imm]", 
             func: |f, input| {
-            for _ in 0..=input { dynasm!(f ; mov [0x1000], Rq(0)); }
+            for _ in 0..=input { dynasm!(f ; mov Rq(0), [0x1000]); }
         }}, 
-        EmitterDesc { desc: "mov [imm], r32", 
+        EmitterDesc { desc: "mov r32, [imm]", 
             func: |f, input| {
-            for _ in 0..=input { dynasm!(f ; mov [0x1000], Rd(0)); }
+            for _ in 0..=input { dynasm!(f ; mov Rd(0), [0x1000]); }
         }}, 
-        EmitterDesc { desc: "mov [imm], r16", 
+        EmitterDesc { desc: "mov r16, [imm]", 
             func: |f, input| {
-            for _ in 0..=input { dynasm!(f ; mov [0x1000], Rw(0)); }
+            for _ in 0..=input { dynasm!(f ; mov Rw(0), [0x1000]); }
         }}, 
-        EmitterDesc { desc: "movnti [imm], r64", 
+        EmitterDesc { desc: "prefetch [imm]", 
             func: |f, input| {
-            for _ in 0..=input { dynasm!(f ; movnti [0x1000], Rq(0)); }
+            for _ in 0..=input { dynasm!(f ; prefetch [0x1000]); }
         }}, 
-        EmitterDesc { desc: "movnti [imm], r32", 
+        EmitterDesc { desc: "prefetchnta [imm]", 
             func: |f, input| {
-            for _ in 0..=input { dynasm!(f ; movnti [0x1000], Rd(0)); }
+            for _ in 0..=input { dynasm!(f ; prefetchnta [0x1000]); }
         }}, 
-        EmitterDesc { desc: "sfence", 
-            func: |f, input| {
-            for _ in 0..=input { dynasm!(f ; sfence) }
-        }}, 
+
 
 
     ]);
 
-
-    //pub fn emit(num_stores: usize) -> X64Assembler {
+    //pub fn emit(num_loads: usize) -> X64Assembler {
     //    let mut rng = rand::thread_rng();
     //    let mut f = X64Assembler::new().unwrap();
 
-    //    // Generate random addresses for the stores
-    //    let mut addrs: Vec<i32> = (0x0001_0000..=0x0001_1000)
+    //    let mut addrs: Vec<i32> = (0x0001_0000..=0x0002_1000)
     //        .step_by(64).collect();
-    //    assert!(num_stores < addrs.len());
+    //    assert!(num_loads < addrs.len());
     //    addrs.shuffle(&mut rng);
+
+    //    for addr in &addrs[0..=num_loads] {
+    //        dynasm!(f 
+    //            ; mov rax, *addr as _
+    //            ; clflush [rax]
+    //        );
+    //    }
 
     //    dynasm!(f
     //        ; mov rax, 0x1111_dead_1111_dead
@@ -81,24 +83,22 @@ impl StoreQueueCapacity {
     //        ; lfence
     //        ; .align 4096
     //        ; lfence
+    //        ; mfence
     //    );
 
     //    f.emit_rdpmc_start(0, Gpr::R15 as u8);
 
-    //    // Insert stores.
-    //    // The width of the store doesn't seem to matter. 
-    //    for addr in &addrs[0..=num_stores] {
-    //        dynasm!(f ; mov [*addr], rax ); // 8B
-    //        //dynasm!(f ; mov [*addr], eax ); // 4B
-    //        //dynasm!(f ; mov [*addr], ax ); // 2B
-    //        //dynasm!(f ; mov [*addr], al ); // 1B
-    //        //dynasm!(f ; movnti [*addr], rax );
-    //        //dynasm!(f ; vmovd [*addr], xmm0); // 4B
-    //        //dynasm!(f ; vmovq [*addr], xmm0); // 8B
-    //        //dynasm!(f ; vmovdqa [*addr], xmm0); // 16B
-    //        //dynasm!(f ; vmovdqa [*addr], ymm0); // 32B
+    //    for addr in &addrs[0..=num_loads] {
+    //        dynasm!(f ; mov rax, [*addr]); // 8B
+    //        //dynasm!(f ; mov eax, [*addr]); // 4B
+    //        //dynasm!(f ; mov ax, [*addr]); // 2B
+    //        //dynasm!(f ; mov al, [*addr]); // 1B
+    //        //dynasm!(f ; movnti rax, [*addr]);
+    //        //dynasm!(f ; vmovd xmm0, [*addr]); // 4B
+    //        //dynasm!(f ; vmovq xmm0, [*addr]); // 8B
+    //        //dynasm!(f ; vmovdqa xmm0, [*addr]); // 16B
+    //        //dynasm!(f ; vmovdqa ymm0, [*addr]); // 32B
     //    }
-    //    //dynasm!(f ; sfence);
 
     //    f.emit_rdpmc_end(0, Gpr::R15 as u8, Gpr::Rax as u8);
     //    f.emit_ret();
@@ -108,14 +108,13 @@ impl StoreQueueCapacity {
 
     //pub fn run(harness: &mut PerfectHarness) {
     //    let mut events = EventSet::new();
-    //    events.add(Zen2Event::LsDispatch(LsDispatchMask::StDispatch));
-    //    events.add(Zen2Event::LsNotHaltedCyc(0x00));
+    //    //events.add(Zen2Event::LsDispatch(LsDispatchMask::LdDispatch));
     //    events.add(Zen2Event::DeDisDispatchTokenStalls1(
-    //        DeDisDispatchTokenStalls1Mask::StoreQueueRsrcStall
+    //        DeDisDispatchTokenStalls1Mask::LoadQueueRsrcStall
     //    ));
 
-    //    for num_stores in 0..=49 {
-    //        let asm = Self::emit(num_stores);
+    //    for num_loads in 0..=128 {
+    //        let asm = Self::emit(num_loads);
     //        let asm_reader = asm.reader();
     //        let asm_tgt_buf = asm_reader.lock();
     //        let asm_tgt_ptr = asm_tgt_buf.ptr(AssemblyOffset(0));
@@ -123,18 +122,18 @@ impl StoreQueueCapacity {
     //            std::mem::transmute(asm_tgt_ptr)
     //        };
 
-    //        println!("[*] num_stores={}", num_stores);
+    //        println!("[*] num_loads={}", num_loads);
     //        for event in events.iter() { 
     //            let desc = event.as_desc();
     //            let results = harness.measure(asm_fn, 
-    //                desc.id(), desc.mask(), 16, InputMethod::Fixed(0, 0),
+    //                desc.id(), desc.mask(), 128, InputMethod::Fixed(0, 0),
     //            ).unwrap();
 
     //            let dist = results.get_distribution();
     //            let min = results.get_min();
     //            let max = results.get_max();
-    //            println!("  {:03x}:{:02x} {:032} min={:3} max={:3} dist={:?}", 
-    //                desc.id(), desc.mask(), desc.name(), min, max, dist);
+    //            println!("  {:03x}:{:02x} {:032} min={:3} max={:3}",
+    //                desc.id(), desc.mask(), desc.name(), min, max);
     //        }
     //    }
     //}
@@ -142,7 +141,7 @@ impl StoreQueueCapacity {
     fn run(harness: &mut PerfectHarness) {
         let mut events = EventSet::new();
         events.add(Zen2Event::DeDisDispatchTokenStalls1(
-                DeDisDispatchTokenStalls1Mask::StoreQueueRsrcStall
+                DeDisDispatchTokenStalls1Mask::LoadQueueRsrcStall
         ));
 
         let opts = MispredictedReturnOptions::zen2_defaults()
@@ -199,6 +198,7 @@ impl StoreQueueCapacity {
         }
 
     }
+
 
 
 }

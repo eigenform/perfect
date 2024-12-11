@@ -37,6 +37,48 @@ impl LsBadStatus2Mask {
     }
 }
 
+#[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash)]
+pub enum LsDataPipeMask {
+    PureLd,
+    LdOpSt,
+    PureSt,
+    HwPfStreamPick,
+    HwPfStrideRegPick,
+    Unk(u8),
+}
+impl LsDataPipeMask {
+    pub fn desc(&self) -> MaskDesc { 
+        match self { 
+            Self::PureLd => MaskDesc::new(0x01, "PureLd"),
+            Self::LdOpSt => MaskDesc::new(0x02, "LdOpSt"),
+            Self::PureSt => MaskDesc::new(0x04, "PureSt"),
+            Self::HwPfStreamPick => MaskDesc::new(0x08, "HwPfStreamPick"),
+            Self::HwPfStrideRegPick => MaskDesc::new(0x30, "HwPfStrideRegPick"),
+            Self::Unk(x) => MaskDesc::new(*x, "Unk"),
+        }
+    }
+}
+
+
+#[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash)]
+pub enum LsMabAllocMask {
+    Loads,
+    Stores,
+    DcPrefetcher,
+    Unk(u8),
+}
+impl LsMabAllocMask {
+    pub fn desc(&self) -> MaskDesc { 
+        match self { 
+            Self::Loads => MaskDesc::new(0x01, "Loads"),
+            Self::Stores => MaskDesc::new(0x02, "Stores"),
+            Self::DcPrefetcher => MaskDesc::new(0x08, "DcPrefetcher"),
+            Self::Unk(x) => MaskDesc::new(*x, "Unk"),
+        }
+    }
+}
+
+
 
 
 #[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash)]
@@ -261,6 +303,8 @@ impl DeDisDispatchTokenStalls0Mask {
 
 #[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash)]
 pub enum DsTokStall3Mask {
+    /// Cycles where no ops were dispatched? 
+    Zero,
     /// Cycles where one op was dispatched
     Cop1Disp,
     /// Cycles where two ops were dispatched
@@ -271,6 +315,8 @@ pub enum DsTokStall3Mask {
     Cop4Disp,
     /// Cycles where five ops were dispatched
     Cop5Disp,
+    /// Cycles where six ops were dispatched
+    Cop6Disp,
     /// Cycles where at least one op was dispatched
     NonZero,
     Unk(u8),
@@ -278,12 +324,14 @@ pub enum DsTokStall3Mask {
 impl DsTokStall3Mask {
     pub fn desc(&self) -> MaskDesc { 
         match self { 
+            Self::Zero     => MaskDesc::new(0x01, "Zero"),
             Self::Cop1Disp => MaskDesc::new(0x02, "Cop1Disp"),
             Self::Cop2Disp => MaskDesc::new(0x04, "Cop2Disp"),
             Self::Cop3Disp => MaskDesc::new(0x08, "Cop3Disp"),
             Self::Cop4Disp => MaskDesc::new(0x10, "Cop4Disp"),
             Self::Cop5Disp => MaskDesc::new(0x20, "Cop5Disp"),
-            Self::NonZero => MaskDesc::new(0x7e, "NonZero"),
+            Self::Cop6Disp => MaskDesc::new(0x40, "Cop6Disp"),
+            Self::NonZero  => MaskDesc::new(0x7e, "NonZero"),
             Self::Unk(x) => MaskDesc::new(*x, "Unk"),
         }
     }
@@ -308,12 +356,11 @@ impl StkEngFxOpMask {
 }
 
 
-
 /// Zen 2 events. 
 ///
-/// This list is cobbled together from documentation for various Zen families 
-/// and lots of experiments. In short: the Zen 2 PPRs do not exhaustively list 
-/// all of the supported events on Zen 2 parts. 
+/// This list is cobbled together from all publically-available documentation 
+/// for various Zen families (PPRs for 17h and 19h parts) and *lots* of 
+/// experiments. 
 ///
 /// Instead of statically defining all of these, the full event is built out 
 /// of this enum during runtime. This is largely just a hack to get a nice 
@@ -321,185 +368,437 @@ impl StkEngFxOpMask {
 ///
 #[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash)]
 pub enum Zen2Event { 
+
+    // 0x00 - FpuPipeAssignment
+
+    // 0x01 - FpSchedEmpty
+    
+    // 0x02 - FpRetx87FpOps
+
+    // 0x03 - FpRetSseAvxOps
+    // (from old Family 17h PPRs)
     FpRetSseAvxOps(FpRetSseAvxOpsMask),
+
+    // 0x04 - FpNumMovElimScalOp, move elimination [fp] ops 
+    // (from old Family 17h PPRs)
+    //FpNumMovElimScalOp(u8),
+
+    // 0x05 - FpRetiredSerOps, retired [fp] serializing ops
+    // (from old Family 17h PPRs)
+    //FpRetiredSerOps(u8),
+
+    // 0x06:01 - seemingly valid, highly variable and spurious
+
+    // 0x07 - FpModsToFpCntrlWrd ?
+  
+    // 0x08 - FpOpsRetiredByWidth?
+
+    // 0x09 - FpThrottlePipeClks?
+
+    // 0x0a - FpOpsRetiredByType ?
     FpOpsRetiredByType(u8),
+
+    // 0x0b
     FpSseAvxOpsRetired(u8),
+
+    // 0x0c
     FpPackOpsRetired(u8),
+
+    // 0x0d
     FpPackedIntOpType(u8),
+
+    // 0x0e
     FpDispFaults(u8),
 
+    // 0x0f ? 
+    
+    // NOTE: No observations for 0x10 - 0x1f
+
     // 0x20:02,04 is valid
+
+
+    // 0x21
+
+    // 0x22
+
     // 0x23 is valid
     //  - :02, rdrand,rdseed
     //  - :10, xsave
     //  - :80, rdrand, rdseed
 
+    // 0x24
     LsBadStatus2(LsBadStatus2Mask),
+    
+    // 0x25
     LsLocks(u8),
+
+    // 0x26
     LsRetClFlush(u8),
+
+    // 0x27
     LsRetCpuid(u8),
 
     // 0x28?
-    // 0x29? - valid
-    // 0x2a?
-    // 0x2c - valid
-    // 0x2d is valid? (counts for rdtsc and rdtscp?)
-    // 0x2e?
-    // 0x2f - valid
 
+    // 0x29
     LsDispatch(LsDispatchMask),
-    LsDataPipe(u8),
+
+    // 0x2a?
+
+    // 0x2b?
+
+    // 0x2c - valid
+
+    // 0x2d - [speculative] rdtsc reads
+    LsRdTsc(u8),
+
+    // 0x2e?
+
+    // 0x2f - valid
+    LsDataPipe(LsDataPipeMask),
 
     // 0x30?
     // 0x31?
-    // 0x33?
-    // 0x34?
 
+    // 0x32
     LsStMisalign(u8),
+
+    // 0x33
+    // 0x34
+
+    // 0x35
     LsSTLF(u8),
+
+    // 0x36
     LsStoreCommitCancel(u8),
+
+    // 0x37
     LsStoreCommitCancel2(u8),
 
     // 0x38?
+
+    // 0x39:01 counts for 8-bit stores?
+    // 0x39:02 counts for 8-bit stores? 
+
     // 0x3a?
+
     // 0x3b?
+
     // 0x3c?
+
     // 0x3d?
+
     // 0x3e?
+
     // 0x3f?
 
     // 0x40 - valid
+    LsDcAccesses(u8),
 
-    LsMabAlloc(u8),
+    // 0x41
+    LsMabAlloc(LsMabAllocMask),
 
     // 0x42?
 
+    // 0x43 - LsRefillsFromSys? 
+
+    // 0x44
+
+    // 0x45 - LsL1DTlbMiss?
+
+    // 0x46
+
+    // 0x47
     LsMisalLoads(u8),
+
+    // 0x48
+
+    // 0x4b
     LsPrefInstrDisp(u8),
+
+    // 0x4d:01 - counts for xsave (???)
+    // 0x4d:02 - counts for xsave (???)
+    // 0x4d:00 - counts for xsave (???)
+
+    // 0x4e - counts for xsave (???)
+
+    // 0x4f - counts for xsave (???), no mask?
+
+    // 0x50? 
     LsWcbClosePremature(u8),
 
 
+    // 0x51:06 - DemHitHwPfMabStrideReg? 
+
+    // 0x52 - LsInefSwPref?
+
+    // 0x53
+
+    // 0x54
+
+    // 0x55
+
+    // 0x56 - counts for rdrand/rdseed, no mask?
+
+    // 0x57:06 - HwPfMabAllocStrideReg? 
+
+    // 0x58 - NumMabMatchHwPref?
+
+    // 0x59 - LSSwPfDcFills
+
+    // 0x5a - LsHwPfDcFills
+
+    // 0x5b - LsTwDcFills
+
+    // 0x5c
+
+    // 0x5d
+
+    // 0x5e
+
+    // 0x5f - LsAllocMabCount
+
+    // 0x60 - L2RequestG1
+
+    // 0x61 - L2RequestG2
+
+    // 0x62 - L2Latency?
+
+    // 0x63 - L2WbcReq
+
+    // 0x64 - L2CacheReqStat?
+
+    // 0x65
+
+    // 0x66:c0 - L24IcVal1DcVal1 
+    // 0x66:30 - L24IcVal1DcVal0
+    // 0x66:0c - L24IcVal0DcVal1
+    // 0x66:03 - L24IcVal0DcVal0
+
+    // 0x67
+
+    // 0x68
+
+    // 0x69
+
+    // 0x6a:01 - counts for rdrand/rdseed?
+    // 0x6a:04 - counts for clflush and clzero?
+
+    // 0x6b
+
+    // 0x6c:02 - L26L2ClksUnderDvmSyncQuiesce (???)
+
+    // 0x6d - L2FillPending
+
+    // 0x6e
+
+    // 0x6f:0c - L211PromotedLsHwPfDemCnt? 
+
+    // 0x70 - L2PfHitL2
+
+    // 0x71 - L2PfHitL3
+
+    // 0x72 - L2PfMissL3
+
+    // 0x73
+
+    // 0x74 - counts for rdrand/rdseed
+
+    // 0x75
+
+    // 0x76 
     LsNotHaltedCyc(u8),
 
-    // 0x77 - valid?
-    // 0x79 - valid?
-    // 0x7a - valid?
-    // 0x7c - valid?
+    // 0x77:01 - LsNotHaltedP0Cyc.P0FreqCyc (?)
 
-    // Number of 32B windows passed to decoder
+    // 0x78:01 - LsTlbFlush.all?
+
+    // 0x79 - valid? (L2 prefetch accuracy?)
+
+    // 0x7a - valid?
+
+    // 0x7b
+
+    // 0x7c - valid? (l2 related?)
+
+    // 0x7d
+
+    // 0x7e
+
+    // 0x7f
+
+    // 0x80 - Number of 32B windows passed to decoder?
     IcFw32(u8),
 
-    // Number of L1I tag misses
+    // 0x81 - Number of L1I tag misses
     IcFw32Miss(u8),
 
+    // 0x82
     IcCacheFillL2(u8),
+
+    // 0x83
     IcCacheFillSys(u8),
 
-    /// L1 ITLB fetch hit
-    BpL1TlbFetchHit(BpL1TlbFetchHitMask),
-
-    /// L1 ITLB miss into L2 ITLB miss
-    BpL1TlbMissL2TlbMiss(BpL1TlbMissL2TlbMissMask),
-
-    /// L1 ITLB miss into L2 ITLB hit
+    // 0x84 - L1 ITLB miss into L2 ITLB hit ?
     BpL1TlbMissL2TlbHit(u8),
 
+    // 0x85 - L1 ITLB miss into L2 ITLB miss ?
+    BpL1TlbMissL2TlbMiss(BpL1TlbMissL2TlbMissMask),
+
+    // 0x86 - BpSnpReSync? "Pipeline Restart Due to Instruction Stream Probe" 
+
+    // 0x87
     IcFetchStallCyc(IcFetchStallCycMask),
 
-    // 0x88 is probably valid
-    // 0x8c: IcCacheInval
-    // 0x8d is probably valid
-
-    // 0x90: counts for branches? 
-    // - ret?
-
-    // 0x92: ?
-    // 0x93: ?
-    // 0x94: 
-  
-    // 0x95: ?
-    // 0x96: ?
-    // 0x97: valid?
-    // 0x98: ?
-    // 0x99: ?
-    // 0x9a: ?
+    // 0x88 - valid, no mask?
+    //  - conditional branch loops
+    //  - ret
+    //  - mfence
+    //  - cpuid
+    //  - xrstor
     //
-    // 0x9b: valid?
-    //  - 1 for conditional branches, jmp, ind jmp, ind call
-    //  - 3 for ret?
-    //  - 23 for verr,verw,mfence,cpuid? 
 
-    // 0x9c: valid?
-    //  - 1 for branches, jmp,call,ret
-    //  - 16 for lsl,lar,verr,verw,mfence,cpuid?
-    // 0x9d: valid? same as 9c?
-    // 0x9e: valid? same as 9c and 9d?
-    //
-    // 0x9f: valid? 
-    //  - 1 for ret, mfence, cpuid?
+    // 0x89
 
-    // NOTE: AMD PPRs describe BTB hits as "corrections" because they are 
-    // corrections to the "default" output from next-fetch prediction 
-    // (a "zero-cycle" prediction: sequential, L0 BTB, or RAS).
-    // ... then again, the output from these seems confusing to me. 
+    // 0x8a
     BpL1BTBCorrect(u8),
+
+    // 0x8b
     BpL2BTBCorrect(u8),
 
-    // NOTE: I'm not convinced this is accurately labeled? Need to test?
+    // 0x8c - IcCacheInval?
+
+    // 0x8d - valid?
+    // NOTE: from 19h, I'm not convinced this is accurately labeled?
     BpL0BTBHit(u8),
 
+    // 0x8e
     BpDynIndPred(u8),
 
-    // NOTE: This doesn't seem accurate..
+    // 0x8f
+    // NOTE: From 19h - This doesn't seem accurate..
     IfDqBytesFetched(u8),
+
+
+
+
+    // 0x90: counts for ret only? no mask? (this is ClksBpStalled in 19h?)
+    // - ret?
 
     // 0x91 - Redirect from decode
     BpDeReDirect(u8),
 
-    // Presumably this is redirect from dispatch/completion/retire? 
-    // NOTE: This doesn't seem accurate..
+    // 0x92: ?
+
+    // 0x93: ?
+
+    /// 0x94 - L1 ITLB fetch hit
+    BpL1TlbFetchHit(BpL1TlbFetchHitMask),
+ 
+    // 0x95: ?
+
+    // 0x96: ?
+
+    // 0x97: valid?
+
+    // 0x98: ?
+
+    // 0x99: ?
+
+    // 0x9a: ?
+
+    // 0x9b: valid?, no mask?
+    //  - 1 for conditional branches, jmp, ind jmp, ind call
+    //  - 3 for ret?
+    //  - 23 for verr,verw,mfence,cpuid,xrstor?
+
+    // 0x9c: valid?, no mask?
+    //  - 1 for branches, jmp,call,ret
+    //  - 16 for lsl,lar,verr,verw,mfence,cpuid,xrstor?
+
+    // 0x9d: valid? same as 9c?, no mask?
+
+    // 0x9e: valid? same as 9c and 9d?, no mask?
+
+    // 0x9f - Redirects? no mask?
+    //  - 1 for ret, mfence, cpuid, xrstor, conditional branch loop?
+    // NOTE: this name is from 19h? maybe not accurate? 
     BpRedirect(BpRedirectMask),
 
-    // 0xa0?
-    // 0xa1?
-    // 0xa2?
-    // 0xa3?
+    // 0xa0:01 counts during jcc loop
 
-    // 0xa5 is valid
-    // 0xa6 is valid
+    // 0xa1? - oc_set_way_ent_acc in 19h
+    // 0x0a:01 counts during jcc, loop
+
+    // 0xa2? - no mask. oc_builds in 19h?
+
+    // 0xa3 - no mask. highly variable, probably some kind of latency?
+
+    // 0xa4 - no mask. 
+    //  - indirect call
+    //  - ret
+    //  - mfence
+    //  - cpuid
+    //  - xrstor
+
+    // 0xa5:01 - counts for most ops
+    // 0xa5:04 - ret,mfence,cpuid,xrstor?
+    // 0xa5:10 - call,ret,lsl,lar,verr,verw,mfence,cpuid,xrstor?
+
+    // 0xa6:02 - cpuid, f2xm1?
+    // 0xa6:04 - lsl,lar,verr,verw,mfence,cpuid,xrstor?
+    //
 
     // 0xa7:01 is valid (counts during most-if-not-all ops?)
     // 0xa7:08 is valid (counts during ucoded instrs, some branches? misp?)
 
     // 0xa8
     DeMsStall(DeMsStallMask),
+
     // 0xa9
     DeDisUopQueueEmpty(u8),
+
     // 0xaa 
     DeSrcOpDisp(u8),
+
     // 0xab
     DeDisOpsFromDecoder(DeDisOpsFromDecoderMask),
 
-    // NOTE: 0xac and 0xad kind of behave the same?
-    // 0xac is valid
-    // 0xad is valid
+    // NOTE: 0xac and 0xad kind of behave the same? Adds up to LsNotHaltedCyc?
+    // I would not be suprised if these are for the schedulers, or reflect
+    // the ALU pipelines
+    // 0xac is valid, no mask
 
+    // 0xad:01 - loops, ret
+    // 0xad:02 - most ops
+    // 0xad:04 - most ops
+    // 0xad:08 - most ops
+    // 0xad:10 - most ops
+    // 0xad:20 - most ops
+    // 0xad:40 - most ops
+
+    // 0xae
     DeDisDispatchTokenStalls1(DeDisDispatchTokenStalls1Mask),
-    DeDisDispatchTokenStalls0(DeDisDispatchTokenStalls0Mask),
 
+    // 0xaf
+    DeDisDispatchTokenStalls0(DeDisDispatchTokenStalls0Mask),
 
 
     // 0xb0?
 
+    // 0xb1
     MemFileHit(u8),
+
+    // 0xb2
     MemRenLdDsp(u8),
+
+    // 0xb3
     MemRenLdElim(u8),
 
     // 0xb4
     // seems valid; all masks vaguely add up to LsNotHaltedCyc?
     DsTokStall3(DsTokStall3Mask),
 
-    // 0xb5
     // 0xb5:01 seems valid (inconsistent floor?)
     // - rep lodsq [rsi]
     // - xsave [0x100]
@@ -510,8 +809,6 @@ pub enum Zen2Event {
     // - pdep/pext
     // - ret
     Dsp0Stall(u8),
-
-
 
     // 0xb6:01,02,04 seem valid? 
     // - rep lodsq [rsi]
@@ -534,84 +831,143 @@ pub enum Zen2Event {
     StkEngFxOp(StkEngFxOpMask),
     
     // 0xb9?
-    // 0xba?
-    // 0xbb?
-    // 0xbc seems valid? counts for fp ops and vzeroupper? 
-    // 0xbd seems valid? counts for vzeroall? 
 
-    // 0xbe:00 - counts for call, ret, push, pop. 
+    // 0xba?
+
+    // 0xbb?
+
+    // 0xbc seems valid? counts for fp ops and vzeroupper? no mask?
+
+    // 0xbd seems valid? counts only for vzeroall? no mask?
+
+    // 0xbe:00 - counts for call, ret, push, pop, no mask?
     // Also counts when rsp is used in integer ops, or in addressing? 
     StkEngRspDltUs(u8),
 
-    //RipRelAgenUsesDisp // 0xbf
+    //0xbe - RipRelAgenUsesDisp? 
 
+    //0xbf
+
+    // 0xc0
     ExRetInstr(u8),
+
+    // 0xc1
     ExRetCops(u8),
+
+    // 0xc2
     ExRetBrn(u8),
+
+    // 0xc3
     ExRetBrnMisp(u8),
+
+    // 0xc4
     ExRetBrnTaken(u8),
+
+    // 0xc5
     ExRetBrnTakenMisp(u8),
+
+    // 0xc6
     ExRetBrnFar(u8),
+
+    // 0xc7
+    ExRetBrnResync(u8),
+
+    // 0xc8
     ExRetNearRet(u8),
+
+    // 0xc9
     ExRetNearRetMisp(u8),
+
+    // 0xca
     ExRetBrnIndMisp(u8),
+
+    // 0xcb
     ExRetMmxFpInstr(u8),
 
-    // 0xd0 is valid but inconsistent; could be memory related?
+    // 0xcc
+    //ExRetIndBrchInstr(u8)
+
+    // 0xcd
+
+    // 0xce
+
+    // 0xcf:01 - "fp_micro_faults"?
+    // 0xcf:02 - "fp_micro_traps"?
+    // 0xcf:10 - "fp_bypass_faults"?
+    // 0xcf:0c - "fp_ext2_int_int2_ext_faults"?
+
+    // 0xd0 is valid but inconsistent; could be memory related?, no mask
     //  - xsave [0x100]
     //  - rdseed, rdrand
 
-    // 0xd1, from 19h - unverified?
+    // 0xd1, from 19h, old 17h - unverified?
     ExRetCond(u8),
 
-    // 0xd2 ?
+    // 0xd2, unverified, from 17h
+    ExRetCondMisp(u8),
 
-    // 0xd3 - "ExDivCount" 
-    //   - div, idiv
-    ExDivCount(u8),
-
-    // 0xd4 - "ExDivBusy"
+    // 0xd3
     //   - div, idiv
     ExDivBusy(u8),
 
+    // 0xd4
+    //   - div, idiv
+    ExDivCount(u8),
+
     // 0xd5 (seems related to 0x1d6?)
-    // count speculative dispatched ops? or cycles? 
+    // - no mask
+    // - counts either speculative ops, or cycles? 
     // Must only be relevant for integer/mem ops? 
+    // NOTE: This might actually be *scheduled* ops
     //
     //  Counts for: 
     //      - zero idioms, add immediate
     //      - register-to-register moves from a nonzero register? 
     //      - scheduled ops?
+    //      - moves from fp to int, int to fp
+    //      - avx ops that reference memory? 
+    //      - comiss? 
+    //
     //  Doesn't count for:
     //      - register-to-register moves from a zeroed register?
     //      - direct unconditional branches
 
-    // 0xd6 ?
-    // 0xd7 ?
-    // 0xd8 ?
+    // 0xd6 (doesn't seem to count anything...? ex_no_retire in 19h?)
 
+    // 0xd7 ?
+
+    // 0xd8 ?
 
     // 0xd9, from 19h - unverified?
     ExRetireEmpty(u8),
 
     // 0xda ?
+
     // 0xdb ?
+
     // 0xdc ?
+
     // 0xdd ?
+
     // 0xde ?
+
     // 0xdf ?
 
     // 0x1c0?
     
     // 0x1c1
     ExRetUcodeInst(u8),
+
     // 0x1c2
     ExRetUcodeOps(u8),
+
     // 0x1c3, valid (from 19h?), unverified
     UopReqInterruptCheck(u8),
 
     // 0x1c4?
-    // 0x1c5? - ret
+
+    // 0x1c5? - only counts for ret, no masks
+
     // 0x1c6?
 
     // 0x1c7, unverified?
@@ -621,7 +977,7 @@ pub enum Zen2Event {
     // - ret
     Bp1RetBrUncondMisp(u8),
 
-    // 0x1c9 - unconditional branch related?
+    // 0x1c9 - unconditional branch related? no masks
     // - ret, call, jmp
 
     // 0x1ca
@@ -650,12 +1006,36 @@ pub enum Zen2Event {
 
 
     // 0x1cf
-    // 0x1d6 - counts during scheduled ops? might be cycles?
+
+    // 0x1d0 - ExRetFusBrnchInst? 
+
+    // 0x1d1 ?
+
+    // 0x1d2 ?
+
+    // 0x1d3 ?
+
+    // 0x1d4 ?
+
+    // 0x1d5 ?
+
+    // 0x1d6 - valid, unclear? 
+
+    // 0x1d7
+
+    // 0x1d8
+
+    // 0x1d9
+
+    // 0x1da
 
     // 0x1db- Think this is *retired* eliminated moves
     ExMovElim(u8),
 
-    // 0x1dc- valid, seemingly inconsistent? counts during lock prefix ops?
+    // 0x1dc - valid, seemingly inconsistent?, nomask
+    // - counts during lock prefix ops?
+    // - rdseed/rdrand
+
 
     /// Bring-your-own event and mask. 
     Unk(u16, u8),
@@ -671,7 +1051,7 @@ impl AsEventDesc for Zen2Event {
                 EventDesc::new_unk(*v, mask)
             },
 
-
+            // ---------------------------------
             Self::FpRetSseAvxOps(m) => {
                 let mask = m.desc();
                 EventDesc::new(0x003, "FpRetSseAvxOps", mask)
@@ -698,6 +1078,7 @@ impl AsEventDesc for Zen2Event {
             },
 
 
+            // ---------------------------------
             Self::LsBadStatus2(m) => {
                 let mask = m.desc();
                 EventDesc::new(0x024, "LsBadStatus2", mask)
@@ -718,10 +1099,18 @@ impl AsEventDesc for Zen2Event {
                 let mask = m.desc();
                 EventDesc::new(0x029, "LsDispatch", mask)
             },
-            Self::LsDataPipe(x) => {
+
+            Self::LsRdTsc(x) => {
                 let mask = MaskDesc::new_unk(*x);
+                EventDesc::new(0x02d, "LsRdTsc", mask)
+            },
+
+            Self::LsDataPipe(m) => {
+                let mask = m.desc();
                 EventDesc::new(0x02f, "LsDataPipe", mask)
             },
+
+            // ---------------------------------
             Self::LsStMisalign(x) => {
                 let mask = MaskDesc::new_unk(*x);
                 EventDesc::new(0x032, "LsStMisalign", mask)
@@ -738,8 +1127,14 @@ impl AsEventDesc for Zen2Event {
                 let mask = MaskDesc::new_unk(*x);
                 EventDesc::new(0x037, "LsStoreCommitCancel2", mask)
             },
-            Self::LsMabAlloc(x) => {
+
+            // ---------------------------------
+            Self::LsDcAccesses(x) => {
                 let mask = MaskDesc::new_unk(*x);
+                EventDesc::new(0x040, "LsDcAccesses", mask)
+            },
+            Self::LsMabAlloc(m) => {
+                let mask = m.desc();
                 EventDesc::new(0x041, "LsMabAlloc", mask)
             },
             Self::LsMisalLoads(x) => {
@@ -750,16 +1145,21 @@ impl AsEventDesc for Zen2Event {
                 let mask = MaskDesc::new_unk(*x);
                 EventDesc::new(0x04b, "LsPrefInstrDisp", mask)
             },
+
+            // ---------------------------------
             Self::LsWcbClosePremature(x) => {
                 let mask = MaskDesc::new_unk(*x);
                 EventDesc::new(0x050, "LsWcbClosePremature", mask)
             },
+
+            // ---------------------------------
             Self::LsNotHaltedCyc(x) => {
                 let mask = MaskDesc::new_unk(*x);
                 EventDesc::new(0x076, "LsNotHaltedCyc", mask)
             },
 
 
+            // ---------------------------------
             Self::IcFw32(x) => {
                 let mask = MaskDesc::new_unk(*x);
                 EventDesc::new(0x080, "IcFw32", mask)
@@ -813,6 +1213,8 @@ impl AsEventDesc for Zen2Event {
                 let mask = MaskDesc::new_unk(*x);
                 EventDesc::new(0x08f, "IfDqBytesFetched", mask)
             },
+
+            // ---------------------------------
             Self::BpDeReDirect(x) => {
                 let mask = MaskDesc::new_unk(*x);
                 EventDesc::new(0x091, "BpDeReDirect", mask)
@@ -828,6 +1230,7 @@ impl AsEventDesc for Zen2Event {
                 EventDesc::new(0x09f, "BpRedirect", mask)
             },
 
+            // ---------------------------------
             Self::DeMsStall(m) => {
                 let mask = m.desc();
                 EventDesc::new(0x0a8, "DeMsStall", mask)
@@ -855,6 +1258,7 @@ impl AsEventDesc for Zen2Event {
             },
 
 
+            // ---------------------------------
             Self::MemFileHit(x) => {
                 let mask = MaskDesc::new_unk(*x);
                 EventDesc::new(0x0b1, "MemFileHit", mask)
@@ -897,6 +1301,7 @@ impl AsEventDesc for Zen2Event {
                 EventDesc::new(0x0be, "StkEngRspDltUs", mask)
             },
 
+            // ---------------------------------
             Self::ExRetInstr(x) => {
                 let mask = MaskDesc::new_unk(*x);
                 EventDesc::new(0x0c0, "ExRetInstr", mask)
@@ -925,6 +1330,10 @@ impl AsEventDesc for Zen2Event {
                 let mask = MaskDesc::new_unk(*x);
                 EventDesc::new(0x0c6, "ExRetBrnFar", mask)
             },
+            Self::ExRetBrnResync(x) => {
+                let mask = MaskDesc::new_unk(*x);
+                EventDesc::new(0x0c7, "ExRetBrnResync", mask)
+            },
 
             Self::ExRetNearRet(x) => {
                 let mask = MaskDesc::new_unk(*x);
@@ -943,18 +1352,24 @@ impl AsEventDesc for Zen2Event {
                 EventDesc::new(0x0cb, "ExRetMmxFpInstr", mask)
             },
 
+            // ---------------------------------
             Self::ExRetCond(x) => {
                 let mask = MaskDesc::new_unk(*x);
                 EventDesc::new(0x0d1, "ExRetCond", mask)
             },
-
-            Self::ExDivCount(x) => {
+            Self::ExRetCondMisp(x) => {
                 let mask = MaskDesc::new_unk(*x);
-                EventDesc::new(0xd3, "ExDivCount", mask)
+                EventDesc::new(0x0d2, "ExRetCondMisp", mask)
             },
+
+
             Self::ExDivBusy(x) => {
                 let mask = MaskDesc::new_unk(*x);
-                EventDesc::new(0xd4, "ExDivBusy", mask)
+                EventDesc::new(0xd3, "ExDivBusy", mask)
+            },
+            Self::ExDivCount(x) => {
+                let mask = MaskDesc::new_unk(*x);
+                EventDesc::new(0xd4, "ExDivCount", mask)
             },
 
 
@@ -965,6 +1380,7 @@ impl AsEventDesc for Zen2Event {
             },
 
 
+            // ---------------------------------
             Self::ExRetUcodeInst(x) => {
                 let mask = MaskDesc::new_unk(*x);
                 EventDesc::new(0x1c1, "ExRetUcodeInst", mask)

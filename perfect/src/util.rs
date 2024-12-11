@@ -154,7 +154,7 @@ impl PerfectEnv {
     }
 }
 
-pub fn disas_str_single(buf: &ExecutableBuffer, offset: AssemblyOffset) 
+pub fn disas_single(buf: &ExecutableBuffer, offset: AssemblyOffset)
     -> (String, String)
 {
     let ptr: *const u8 = buf.ptr(offset);
@@ -163,28 +163,88 @@ pub fn disas_str_single(buf: &ExecutableBuffer, offset: AssemblyOffset)
         std::slice::from_raw_parts(ptr, buf.len() - offset.0)
     };
 
-    let mut decoder = Decoder::with_ip(64, buf, addr, DecoderOptions::NONE);
+    let mut decoder = Decoder::with_ip(64, buf, 0, DecoderOptions::NONE);
     let mut formatter = IntelFormatter::new();
     formatter.options_mut().set_digit_separator("_");
     let _ = formatter.options_mut().first_operand_char_index();
-    let mut output = String::new();
-    let mut instr  = Instruction::default();
 
-    let mut res = String::new();
-    let mut bytestr = String::new();
+    let mut instr  = Instruction::default();
+    let mut bstr = String::new();
+    let mut istr = String::new();
     if decoder.can_decode() {
         decoder.decode_out(&mut instr);
-        output.clear();
-        formatter.format(&instr, &mut output);
+        formatter.format(&instr, &mut istr);
 
-        let start_idx = (instr.ip() - addr) as usize;
+        let start_idx = (instr.ip() - 0) as usize;
         let instr_bytes = &buf[start_idx..start_idx + instr.len()];
         for b in instr_bytes.iter() {
-            bytestr.push_str(&format!("{:02x}", b));
+            bstr.push_str(&format!("{:02x}", b));
         }
     }
-    (bytestr, output)
+    (istr, bstr)
 }
+
+pub fn disas_chunk(buf: &ExecutableBuffer, 
+    start_offset: AssemblyOffset,
+    end_offset: AssemblyOffset,
+) -> Vec<(String, String, bool)>
+{
+    let ptr: *const u8 = buf.ptr(start_offset);
+    let addr: u64   = ptr as u64;
+    let buf: &[u8]  = unsafe { 
+        std::slice::from_raw_parts(ptr, end_offset.0 - start_offset.0)
+    };
+
+    let mut decoder = Decoder::with_ip(64, buf, 0, DecoderOptions::NONE);
+    let mut formatter = IntelFormatter::new();
+    formatter.options_mut().set_digit_separator("_");
+    let _ = formatter.options_mut().first_operand_char_index();
+
+    let mut res = Vec::new();
+    while decoder.can_decode() {
+        let mut instr  = Instruction::default();
+        let mut bstr = String::new();
+        let mut istr = String::new();
+        decoder.decode_out(&mut instr);
+        formatter.format(&instr, &mut istr);
+
+        let start_idx = (instr.ip() - 0) as usize;
+        let instr_bytes = &buf[start_idx..start_idx + instr.len()];
+        for b in instr_bytes.iter() {
+            bstr.push_str(&format!("{:02x}", b));
+        }
+        res.push((istr, bstr, instr.is_invalid()));
+    }
+    res
+}
+
+pub fn disas_bytes(buf: &[u8]) -> Vec<(String, String, bool)>
+{
+    let mut decoder = Decoder::with_ip(64, buf, 0, DecoderOptions::NO_INVALID_CHECK);
+    let mut formatter = IntelFormatter::new();
+    formatter.options_mut().set_digit_separator("_");
+    let _ = formatter.options_mut().first_operand_char_index();
+
+    let mut res = Vec::new();
+
+    while decoder.can_decode() {
+        let mut instr  = Instruction::default();
+        let mut bstr = String::new();
+        let mut istr = String::new();
+        decoder.decode_out(&mut instr);
+
+        formatter.format(&instr, &mut istr);
+        let start_idx = (instr.ip() - 0) as usize;
+        let instr_bytes = &buf[start_idx..start_idx + instr.len()];
+        for b in instr_bytes.iter() {
+            bstr.push_str(&format!("{:02x}", b));
+        }
+        res.push((istr, bstr, instr.is_invalid()));
+    }
+
+    res
+}
+
 
 pub fn disas(
     buf: &ExecutableBuffer, 
@@ -228,18 +288,18 @@ pub fn disas(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Align(pub usize);
 impl Align {
-    pub fn from_value(value: usize) -> Self {
+    pub const fn from_value(value: usize) -> Self {
         assert!(value.is_power_of_two());
         Self(value)
     }
-    pub fn from_bit(bit: usize) -> Self { 
+    pub const fn from_bit(bit: usize) -> Self { 
         assert!(bit <= 63);
         Self(1 << bit)
     }
-    pub fn offset_mask(&self) -> usize { self.0 - 1 }
-    pub fn index_mask(&self) -> usize { !self.offset_mask() }
-    pub fn value(&self) -> usize { self.0 }
-    pub fn check(&self, value: usize) -> bool {
+    pub const fn offset_mask(&self) -> usize { self.0 - 1 }
+    pub const fn index_mask(&self) -> usize { !self.offset_mask() }
+    pub const fn value(&self) -> usize { self.0 }
+    pub const fn check(&self, value: usize) -> bool {
         (value & self.offset_mask()) == 0
     }
 }
@@ -250,33 +310,33 @@ pub struct AlignedAddress {
     align: Align,
 }
 impl AlignedAddress {
-    pub fn new(addr: usize, align: Align) -> Self {
+    pub const fn new(addr: usize, align: Align) -> Self {
         Self { addr, align }
     }
 
-    pub fn next(&self) -> Self {
+    pub const fn next(&self) -> Self {
         let addr = self.addr + self.align.value();
         let align = self.align;
         Self { addr, align }
     }
 
-    pub fn prev(&self) -> Self {
+    pub const fn prev(&self) -> Self {
         let addr = self.addr - self.align.value();
         let align = self.align;
         Self { addr, align }
     }
 
-    pub fn aligned(&self) -> Self {
+    pub const fn aligned(&self) -> Self {
         let addr = self.index_bits();
         let align = self.align;
         Self { addr, align }
     }
 
-    pub fn index_bits(&self) -> usize { 
+    pub const fn index_bits(&self) -> usize { 
         self.addr & self.align.index_mask()
     }
 
-    pub fn offset_bits(&self) -> usize { 
+    pub const fn offset_bits(&self) -> usize { 
         self.addr & self.align.offset_mask()
     }
 
@@ -285,7 +345,7 @@ impl AlignedAddress {
         self.addr = self.index_bits() | offset_bits;
     }
 
-    pub fn value(&self) -> usize { 
+    pub const fn value(&self) -> usize { 
         self.addr
     }
 }
@@ -301,8 +361,8 @@ pub fn flush_btb<const CNT: usize>() {
     unsafe { 
         core::arch::asm!(r#"
         .rept {cnt}
-        jmp 1f
-        1:
+        jmp 2f
+        2:
         .endr
         "#, cnt = const CNT,
         );

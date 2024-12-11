@@ -2,6 +2,7 @@
 pub mod template;
 pub mod branch;
 pub mod pmcdisc;
+pub mod decoder;
 
 use crate::asm::*;
 use crate::harness::*;

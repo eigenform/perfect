@@ -8,7 +8,7 @@ use rand::prelude::*;
 
 fn main() {
     let mut harness = HarnessConfig::default_zen2()
-        .zero_strategy(ZeroStrategy::XorIdiom)
+        .zero_strategy(ZeroStrategy::MovFromZero)
         .arena_alloc(0, 0x2000_0000)
         .emit();
     IntPrfPressure::run(&mut harness);
@@ -30,101 +30,229 @@ fn main() {
 ///
 /// Pressure in the physical register file occurs when many instructions are
 /// in-flight (meaning "dispatched but not-yet-retired") simultaneously. 
-///
 /// If we wanted to create pressure, we'd need to dispatch many instructions
 /// but somehow prevent them from retiring.
+///
+/// Note that there are different figures for the integer PRF capacity in 
+/// different versions of the Family 17h SOG. 
+///
+/// > "SOG for AMD Family 17h Processors",
+/// > Document #55723, Rev 3.01 (dated Feb. 2021): 
+/// >
+/// > *"The integer physical register file (PRF) consists of 168 registers, 
+/// > with up to 38 per thread mapped to architectural state or 
+/// > microarchitectural temporary state."*
+///
+/// > "SOG for AMD Family 17h Models 30h and Greater Processors",
+/// > Document #56305, Rev 3.02 (dated March 2020):
+/// > 
+/// > *"The integer physical register file (PRF) consists of 180 registers, 
+/// > with up to 38 per thread mapped to architectural state or 
+/// > microarchitectural temporary state."*
+///
+/// We expect the results to be close to either of these - although, 
+/// presumably the SOG for "Models 30h and Greater" refers only to the server 
+/// parts (I think these are the EPYC "Rome" parts). I'm documenting this on
+/// the 3950X, which is a desktop part. 
 ///
 /// Test
 /// ====
 ///
-/// Speculatively allocate a lot of physical registers. 
-/// Eventually, we expect to measure stall cycles ('IntPhyRegFileRsrcStall') 
-/// because we cannot dispatch instructions without the availability of free 
-/// physical registers.
+/// In the shadow of a costly mispredicted branch, speculatively allocate as 
+/// many physical registers as we can (ie. by repeating an instruction which 
+/// allocates). Eventually, after emitting a certain number of instructions, 
+/// we expect to measure stall cycles (ie. with `IntPhyRegFileRsrcStall`)
+/// because we cannot dispatch more instructions without the availability of 
+/// free physical registers.
+///
+/// If we assume that no other conditions are preventing instructions from 
+/// being dispatched, this means that the number of free physical registers 
+/// available during the test must be [approximately] 
+/// `(# of instructions) * (# of allocations per instruction)`.
 ///
 /// Results
 /// =======
 ///
-/// The Family 17h SOG mentions that the PRF is:
-/// > "[...] 180 registers, with up to 38 per thread mapped to architectural 
-/// > state or micro-architectural temporary state." 
+/// Observations are mostly consistent when running this executable multiple
+/// times. 
 ///
-/// Inconsistent, but this is probably just due to our lack of control over 
-/// the exact state of the physical register file before the measurement
-/// (which is totally expected). The maximum observed number of instructions 
-/// dispatched before seeing stall cycles is 159. 
+/// - For instructions which allocate a single result, the maximum observed 
+///   number of instructions dispatched before seeing stall cycles is usually 
+///   160. 
 ///
-/// Zeroing Idioms?
-/// ===============
+/// - MUL starts stalling after 80 instructions; this is consistent with our
+///   expectation that it allocates twice (for the result in RAX and RDX).
 ///
-/// Strangely, if you use `xor rax,rax`/`sub rax,rax`, these also allocate 
-/// and eventually stall. This is sort of counterintuitive because we expect
-/// that zeroing idioms are eliminated (ie. handled with renaming by setting 
-/// some zero bit on the integer register map), and that there's be no reason
-/// for them to actually allocate? 
+/// - The LAHF test starts stalling after 40 instructions. You could interpret
+///   this to mean that the implementation in microcode allocates three times,
+///   plus once for the architecturally-visible result in AH? 
 ///
-/// See the experiment in `src/bin/rename.rs` for more information. 
+/// I don't have a way to reproduce this, but it *is* possible to see a 
+/// maximum of 168. I've seen the results suddenly switch to consistently 
+/// being 168 - but I don't have a good explanation for why. 
 ///
+/// - It never happens shortly after rebooting the machine
+/// - After observing it, it seems stable (I never see it return to 160)
+///
+
 pub struct IntPrfPressure;
 impl MispredictedReturnTemplate<usize> for IntPrfPressure {}
 impl IntPrfPressure {
+
+    /// Set of test cases. 
+    ///
+    /// Each of these cases consists of a single repeated instruction. 
+    /// The instructions in each case are only executed speculatively.
     const CASES: StaticEmitterCases<usize> = StaticEmitterCases::new(&[
-        EmitterDesc { desc: "add reg", 
+
+        EmitterDesc { desc: "add r64, r64", 
             func: |f, input| {
-            for _ in 0..=input { 
-                dynasm!(f ; add Rq(0), Rq(0));
-            }
+            for _ in 0..=input { dynasm!(f ; add Rq(0), Rq(0)); }
         }}, 
-        EmitterDesc { desc: "add QWORD imm (one)", 
+        EmitterDesc { desc: "add r32, r32", 
             func: |f, input| {
-            for _ in 0..=input { 
-                dynasm!(f ; add Rq(0), 1);
-            }
+            for _ in 0..=input { dynasm!(f ; add Rd(0), Rd(0)); }
         }}, 
-        EmitterDesc { desc: "inc", 
+        EmitterDesc { desc: "add r64, 0x1", 
             func: |f, input| {
-            for _ in 0..=input { 
-                dynasm!(f ; inc Rq(0));
-            }
+            for _ in 0..=input { dynasm!(f ; add Rq(0), 1); }
         }}, 
-        EmitterDesc { desc: "mov qword imm (random)", 
+
+        EmitterDesc { desc: "vmovq r64, xmm", 
+            func: |f, input| {
+            for _ in 0..=input { dynasm!(f ; vmovq Rq(0), xmm0); }
+        }}, 
+        EmitterDesc { desc: "movd r32, xmm", 
+            func: |f, input| {
+            for _ in 0..=input { dynasm!(f ; movd Rd(0), xmm0); }
+        }}, 
+        EmitterDesc { desc: "movmskpd r64, xmm", 
+            func: |f, input| {
+            for _ in 0..=input { dynasm!(f ; movmskpd Rq(0), xmm0) }
+        }}, 
+        EmitterDesc { desc: "movmskps r64, xmm", 
+            func: |f, input| {
+            for _ in 0..=input { dynasm!(f ; movmskps Rq(0), xmm0) }
+        }}, 
+
+        // NOTE: These don't stall for physical registers (probably because
+        // we're stalling for floating-point resources?)
+        EmitterDesc { desc: "cvtsd2si r64, xmm", 
+            func: |f, input| {
+            for _ in 0..=input { dynasm!(f ; cvtsd2si Rq(0), xmm0); }
+        }}, 
+        EmitterDesc { desc: "cvtss2si r64, xmm", 
+            func: |f, input| {
+            for _ in 0..=input { dynasm!(f ; cvtss2si Rq(0), xmm0); }
+        }}, 
+        EmitterDesc { desc: "cvttsd2si r64, xmm", 
+            func: |f, input| {
+            for _ in 0..=input { dynasm!(f ; cvttsd2si Rq(0), xmm0); }
+        }}, 
+        EmitterDesc { desc: "cvttss2si r64, xmm", 
+            func: |f, input| {
+            for _ in 0..=input { dynasm!(f ; cvttss2si Rq(0), xmm0); }
+        }}, 
+        EmitterDesc { desc: "extractps r64, xmm, 0", 
+            func: |f, input| {
+            for _ in 0..=input { dynasm!(f ; extractps Rq(0), xmm0, 0) }
+        }}, 
+
+
+
+
+
+
+        EmitterDesc { desc: "inc r64", 
+            func: |f, input| {
+            for i in 0..=input { dynasm!(f ; inc Rq(0)); }
+        }}, 
+        EmitterDesc { desc: "inc r32", 
+            func: |f, input| {
+            for i in 0..=input { dynasm!(f ; inc Rd(0)); }
+        }}, 
+        EmitterDesc { desc: "inc r16", 
+            func: |f, input| {
+            for i in 0..=input { dynasm!(f ; inc Rh(0)); }
+        }}, 
+        EmitterDesc { desc: "inc r8", 
+            func: |f, input| {
+            for i in 0..=input { dynasm!(f ; inc Rb(0)); }
+        }}, 
+
+        EmitterDesc { desc: "mov r64, imm (random)", 
             func: |f, input| {
             let mut rng = thread_rng();
             for i in 0..=input { 
                 let val: i64 = rng.gen_range(
                     0x1000_0000_0000_0000..=0x2000_0000_0000_0000
                 );
-                let reg = (i % 16) as u8;
-                dynasm!(f ; mov Rq(reg), QWORD val);
+                dynasm!(f ; mov Rq(0), QWORD val);
             }
         }}, 
-        EmitterDesc { desc: "mov qword imm (zero)", 
+        EmitterDesc { desc: "mov r64, imm (zero)", 
             func: |f, input| {
+            for i in 0..=input { dynasm!(f ; mov Rq(0), QWORD 0); }
+        }}, 
+
+
+        EmitterDesc { desc: "cmp r64, imm (zero)", 
+            func: |f, input| {
+            for i in 0..=input { dynasm!(f ; cmp Rq(0), 0); }
+        }}, 
+
+        EmitterDesc { desc: "cmp r64, imm (random)", 
+            func: |f, input| {
+            let mut rng = thread_rng();
             for i in 0..=input { 
-                let reg = (i % 16) as u8;
-                dynasm!(f ; mov Rq(reg), QWORD 0);
+                let val: i32 = rng.gen_range(
+                    0x1000_0000..=0x2000_0000
+                );
+                dynasm!(f ; cmp Rq(0), DWORD val);
             }
         }}, 
+
+
+        EmitterDesc { desc: "cmp r64, rax", 
+            func: |f, input| {
+            for i in 0..=input { dynasm!(f ; cmp Rq(0), rax); }
+        }}, 
+
+        EmitterDesc { desc: "lea r64, [rip]", 
+            func: |f, input| {
+            for i in 0..=input { dynasm!(f ; lea Rq(0), [rip]); }
+        }}, 
+
+        EmitterDesc { desc: "lea r64, [rip + imm] (random)", 
+            func: |f, input| {
+            let mut rng = thread_rng();
+            for i in 0..=input { 
+                let val: i32 = rng.gen_range(
+                    0x1000_0000..=0x2000_0000
+                );
+                //let reg = (i % 16) as u8;
+                dynasm!(f ; lea Rq(0), [rip + val]);
+            }
+        }}, 
+
+
+        EmitterDesc { desc: "xor r64, r64 (zero idiom)", 
+            func: |f, input| {
+            for i in 0..=input { dynasm!(f ; xor Rq(0), Rq(0)); }
+        }}, 
+
+
+        EmitterDesc { desc: "mul r64", 
+            func: |f, input| {
+            for _ in 0..=input { dynasm!(f ; mul Rq(0)); }
+        }}, 
+
         EmitterDesc { desc: "lahf", 
             func: |f, input| {
-            for _ in 0..=input { 
-                dynasm!(f ; lahf);
-            }
+            for _ in 0..=input { dynasm!(f ; lahf); }
         }}, 
-        EmitterDesc { desc: "cmp imm", 
-            func: |f, input| {
-            for i in 0..=input { 
-                let reg = (i % 16) as u8;
-                dynasm!(f ; cmp Rq(reg), 0);
-            }
-        }}, 
-        EmitterDesc { desc: "zero idiom", 
-            func: |f, input| {
-            for i in 0..=input { 
-                let reg = (i % 16) as u8;
-                dynasm!(f ; xor Rq(reg), Rq(reg));
-            }
-        }}, 
+
+
     ]);
 
 
@@ -136,6 +264,9 @@ impl IntPrfPressure {
 
         let opts = MispredictedReturnOptions::zen2_defaults()
             .free_pregs(true)
+            .prologue_fn(Some(|f, input| { 
+                dynasm!(f; mov rax, 0xdeadbeef; vmovq xmm0, rax)
+            }))
             .rdpmc_strat(RdpmcStrategy::MemStatic(0x0000_5670));
 
         let mut exp_results = ExperimentResults::new();
@@ -143,8 +274,8 @@ impl IntPrfPressure {
             println!("[*] Testcase '{}'", testcase.desc);
             let mut case_res = ExperimentCaseResults::new(testcase.desc);
 
-            for i in 0..=256 {
-                let asm = Self::emit(opts, i, testcase.func);
+            for input in 0..=256 {
+                let asm = Self::emit(opts, input, testcase.func);
 
                 let asm_reader = asm.reader();
                 let asm_tgt_buf = asm_reader.lock();
@@ -156,46 +287,36 @@ impl IntPrfPressure {
                 for event in events.iter() {
                     let desc = event.as_desc();
                     let results = harness.measure(asm_fn, 
-                        desc.id(), desc.mask(), 64, InputMethod::Fixed(0, 0)
+                        desc.id(), desc.mask(), 256, InputMethod::Fixed(0, 0)
                     ).unwrap();
-                    case_res.record(*event, i, results);
+                    case_res.record(*event, input, results);
                 }
             }
             exp_results.push(case_res.clone());
         }
 
         for case_results in exp_results.data.iter() {
-            println!("# Results for case '{}'", case_results.desc);
-
             for (event, event_results) in case_results.data.iter() {
                 let edesc = event.as_desc();
-                let case_name = case_results.desc.replace(" ", "_").to_lowercase();
-                let event_name = edesc.name().replace(".", "_").to_lowercase();
-
-                //let path = format!("/tmp/{}__{:02x}_{:02x}_{}.dat", case_name, 
-                //    edesc.id(), edesc.mask(), event_name);
-                //let mut f = std::fs::OpenOptions::new()
-                //    .write(true) .create(true) .truncate(true)
-                //    .open(&path).unwrap();
-
-                println!("# Event {:03x}:{:02x} '{}'", 
-                    edesc.id(), edesc.mask(), edesc.name());
-                //println!("writing to {}", path);
-
-
                 let minmax = event_results.local_minmax();
-                let avgs = event_results.local_avg_usize();
-                for ((input, avg), (min, max)) in event_results.inputs.iter()
-                    .zip(avgs.iter()).zip(minmax.iter()) 
-                {
-                    //writeln!(f, "input={} min={} avg={} max={}", 
-                    //  input, min, avg, max).unwrap();
-                    println!("input={} min={} avg={} max={}", input, min, avg, max);
+
+                // Find the first test where the minimum observed number of 
+                // events is non-zero 
+                let limit = minmax.iter().enumerate()
+                    .filter(|(idx,x)| x.0 > 0)
+                    .next()
+                    .unwrap_or((0, &(0, 0)));
+
+                if limit.0 != 0 {
+                    println!("{:03x}:{:02x}, limit={:4} ({})",
+                        edesc.id(), edesc.mask(), limit.0, case_results.desc
+                    );
                 }
 
             }
-            println!();
+
         }
+
     }
 }
 

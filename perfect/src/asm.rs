@@ -207,7 +207,7 @@ impl X64AssemblerFixed {
         }
 
         assert!(addr > self.cur_addr(),
-            "Requested pad target {:016x} must be > {:016x}",
+            "Requested pad target {:016x} must be > cursor {:016x}",
             addr, self.cur_addr(),
         );
         assert!(addr <= self.max_addr(),

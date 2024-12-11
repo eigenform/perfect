@@ -11,15 +11,15 @@ BOOST_CTRL=/sys/devices/system/cpu/cpufreq/boost
 GOV_CTRL=/sys/devices/system/cpu/cpufreq/policy0/scaling_governor
 
 if [[ ${1} == "on" ]]; then 
-	./smt.sh off
-	./rdpmc.sh on
-	./freq.sh on
-	./low-mmap.sh on
+	./scripts/smt.sh off
+	./scripts/rdpmc.sh on
+	./scripts/freq.sh on
+	./scripts/low-mmap.sh on
 elif [[ ${1} == "off" ]]; then 
-	./smt.sh on
-	./rdpmc.sh off
-	./freq.sh off
-	./low-mmap.sh off
+	./scripts/smt.sh on
+	./scripts/rdpmc.sh off
+	./scripts/freq.sh off
+	./scripts/low-mmap.sh off
 else
 	echo "usage: $0 [off|on]"
 	exit -1

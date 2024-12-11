@@ -126,7 +126,10 @@ impl BranchDesc {
 
 
     pub fn emit_jmp_direct(&self, f: &mut X64AssemblerFixed) {
-        assert!(f.cur_addr() <= self.addr);
+        assert!(f.cur_addr() <= self.addr, 
+            "cursor {:016x} must be lt/eq branch addr {:016x}", 
+            f.cur_addr(), self.addr
+        );
         f.pad_until(self.addr);
         let lab = f.new_dynamic_label();
         if self.offset() < 128 {
@@ -137,6 +140,22 @@ impl BranchDesc {
         f.pad_until(self.tgt);
         f.place_dynamic_label(lab);
     }
+   pub fn emit_je_direct(&self, f: &mut X64AssemblerFixed) {
+        assert!(f.cur_addr() <= self.addr,
+            "cursor {:016x} must be lt/eq branch address {:016x}",
+            f.cur_addr(), self.addr
+        );
+        f.pad_until(self.addr);
+        let lab = f.new_dynamic_label();
+        if self.offset() < 128 {
+            dynasm!(f ; je BYTE =>lab);
+        } else {
+            dynasm!(f ; je =>lab);
+        }
+        f.pad_until(self.tgt);
+        f.place_dynamic_label(lab);
+    }
+
 }
 
 #[cfg(test)]

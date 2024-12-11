@@ -267,6 +267,10 @@ pub struct HarnessConfig {
     /// from the harness. 
     dump_vgpr: bool,
 
+    /// Optionally allow the harness to automatically execute RDPMC immediately
+    /// before/after calling into measured code. 
+    auto_rdpmc: Option<usize>,
+
     /// Optionally compare RDI to a constant value before entering measured
     /// code. 
     cmp_rdi: Option<i32>,
@@ -305,6 +309,7 @@ impl HarnessConfig {
             arena_alloc: Some((0x0000_0000, 0x1000_0000)),
             dump_gpr: false,
             dump_vgpr: false,
+            auto_rdpmc: None,
             cmp_rdi: None,
             flush_btb: None,
             platform: TargetPlatform::Zen2,
@@ -321,6 +326,7 @@ impl HarnessConfig {
             arena_alloc: Some((0x0000_0000, 0x1000_0000)),
             dump_gpr: false,
             dump_vgpr: false,
+            auto_rdpmc: None,
             cmp_rdi: None,
             flush_btb: None,
             platform: TargetPlatform::Tremont,
@@ -347,6 +353,11 @@ impl HarnessConfig {
 
     pub fn dump_vgpr(mut self, x: bool) -> Self {
         self.dump_vgpr = x;
+        self
+    }
+
+    pub fn auto_rdpmc(mut self, x: Option<usize>) -> Self {
+        self.auto_rdpmc = x;
         self
     }
 
@@ -524,13 +535,6 @@ impl PerfectHarness {
     ///
     /// - Measured functions are expected to end with a return instruction.
     /// - Measured functions are expected to return a result in RAX.
-    ///
-    /// FIXME: You probably want to implement this with [X64AssemblerFixed] 
-    /// instead of the default one. This means that the use of addresses 
-    /// leading up to measured code is more likely to be deterministic 
-    /// (which might matter if you're trying to, for instance, prepare some 
-    /// branch predictor state before reaching measured code). 
-    ///
     fn emit(&mut self) {
         //let mut harness = X64Assembler::new().unwrap();
 
@@ -697,11 +701,45 @@ impl PerfectHarness {
             );
         }
 
-        // Indirectly call the tested function
-        dynasm!(self.assembler
-            ; call r15
-            ; lfence
-        );
+        if let Some(ctr) = self.cfg.auto_rdpmc {
+            unimplemented!();
+            // Indirectly call the tested function
+            dynasm!(self.assembler
+                ; mov rcx, ctr as i32
+                ; lfence
+                ; rdpmc
+                ; lfence
+
+                // NOTE: This is included in the measurement
+                ; mov rcx, QWORD state_ptr as _
+                ; mov [rcx + 0x10], rax
+                ; lfence
+                ; sfence
+
+
+                ; call r15
+                ; lfence
+
+                // NOTE: This is included in the measurement
+                ; mov rcx, ctr as i32
+
+                ; lfence
+                ; rdpmc
+                ; lfence
+
+                ; mov rcx, QWORD state_ptr as _
+                ; mov rcx, [rcx + 0x10]
+                ; sub rax, rcx
+            );
+
+        } 
+        else {
+            // Indirectly call the tested function
+            dynasm!(self.assembler
+                ; call r15
+                ; lfence
+            );
+        }
 
         // Optionally capture the GPRs after exiting measured code.
         if self.cfg.dump_gpr {

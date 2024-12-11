@@ -42,14 +42,24 @@ pub struct MispredictedReturnOptions<I> {
     /// Try to release any hanging physical registers after the initial RDPMC
     pub free_pregs: bool,
 
-    /// Mark the end of the body with a speculative 'prefetch' instruction
+    /// Mark the end of the body with a speculative 'PREFETCH' instruction
     pub prefetch_marker: Option<Gpr>,
+
+    /// Mark the end of the body with a speculative 'FNOP' instruction
+    pub fnop_marker: bool,
 
     /// Emit LFENCE immediately after the body
     pub explicit_lfence: bool,
 
-    /// Optional prologue emitter called before measurement
+    /// Optional prologue emitter [emitted before measurement]
     pub prologue_fn: Option<fn(&mut X64Assembler, I)>,
+
+    /// Optional prologue emitter [emitted immediately *after* measurement]
+    pub post_prologue_fn: Option<fn(&mut X64Assembler, I)>,
+
+    /// Optional *speculative* epilogue emitter [emitted immediately after
+    /// speculative user code].
+    pub speculative_epilogue_fn: Option<fn(&mut X64Assembler, I)>,
 
 }
 impl <I> MispredictedReturnOptions<I> {
@@ -61,8 +71,11 @@ impl <I> MispredictedReturnOptions<I> {
             misprediction_strat: MispredictionStrategy::Return,
             explicit_lfence: false,
             prefetch_marker: None,
+            fnop_marker: false,
             free_pregs: false,
             prologue_fn: None,
+            post_prologue_fn: None,
+            speculative_epilogue_fn: None,
             rdpmc_strat: RdpmcStrategy::Gpr(Gpr::R15),
         }
     }
@@ -75,8 +88,11 @@ impl <I> MispredictedReturnOptions<I> {
             misprediction_strat: MispredictionStrategy::Return,
             explicit_lfence: false,
             prefetch_marker: None,
+            fnop_marker: false,
             free_pregs: false,
             prologue_fn: None,
+            post_prologue_fn: None,
+            speculative_epilogue_fn: None,
             rdpmc_strat: RdpmcStrategy::Gpr(Gpr::R15),
         }
     }
@@ -110,6 +126,11 @@ impl <I> MispredictedReturnOptions<I> {
         self.prefetch_marker = x;
         self
     }
+    pub fn fnop_marker(mut self, x: bool) -> Self { 
+        self.fnop_marker = x;
+        self
+    }
+
 
     pub fn free_pregs(mut self, x: bool) -> Self { 
         self.free_pregs = x;
@@ -120,6 +141,21 @@ impl <I> MispredictedReturnOptions<I> {
         self.prologue_fn = x;
         self
     }
+    pub fn post_prologue_fn(mut self, x: Option<fn(&mut X64Assembler, I)>) 
+        -> Self
+    { 
+        self.post_prologue_fn = x;
+        self
+    }
+
+
+    pub fn speculative_epilogue_fn(mut self, 
+        x: Option<fn(&mut X64Assembler, I)>) -> Self 
+    { 
+        self.speculative_epilogue_fn = x;
+        self
+    }
+
 }
 
 
@@ -244,10 +280,18 @@ pub trait MispredictedReturnTemplate<I: Copy> {
         user_fn: fn(&mut X64Assembler, I), 
     )
     {
+        let done_label = f.new_dynamic_label();
+
+        // Optionally emit a prologue before the gadget
+        if let Some(fun) = opts.post_prologue_fn {
+            fun(f, input);
+        }
+
         // Optionally add padding so that the instruction *after* the CALL 
         // begins on a 64-byte boundary.
         if opts.pad_body {
             dynasm!(f
+                ; lea r14, [=>done_label]
                 ; .align 64
                 ; .bytes NOP8
                 ; .bytes NOP8
@@ -263,6 +307,7 @@ pub trait MispredictedReturnTemplate<I: Copy> {
         } 
         else { 
             dynasm!(f
+                ; lea r14, [=>done_label]
                 ; lfence
                 ; call ->func
             );
@@ -272,10 +317,20 @@ pub trait MispredictedReturnTemplate<I: Copy> {
         // incorrectly speculated path. 
         user_fn(f, input);
 
+        if let Some(fun) = opts.speculative_epilogue_fn {
+            fun(f, input);
+        }
+
+        // Optionally emit a marker with the FNOP instruction. 
+        if opts.fnop_marker {
+            dynasm!(f; fnop);
+        }
         // Optionally emit a marker with the PREFETCH instruction. 
         if let Some(gpr) = opts.prefetch_marker {
             dynasm!(f; prefetch [Rq(gpr as u8)]);
         }
+
+        // Optionally emit a speculative LFENCE after user code.
         if opts.explicit_lfence {
             dynasm!(f; lfence);
         }
@@ -285,6 +340,7 @@ pub trait MispredictedReturnTemplate<I: Copy> {
         f.emit_nop_sled(4096);
         f.emit_lfence();
 
+
         // Mispredict and defer resolution of the actual return address. 
         match opts.platform {
             // MOVNTI has more than enough latency on Zen2.
@@ -292,12 +348,11 @@ pub trait MispredictedReturnTemplate<I: Copy> {
                dynasm!(f
                     ; .align 64
                     ; ->func:
-                    ; lea r14, [->done]
                     ; movnti [rsp], r14
                     ; ret
                     ; lfence
                     ; .align 64
-                    ; ->done:
+                    ; =>done_label
                 );
             },
 
@@ -308,13 +363,12 @@ pub trait MispredictedReturnTemplate<I: Copy> {
                dynasm!(f
                     ; .align 64
                     ; ->func:
-                    ; lea r14, [->done]
                     //; movdiri [rsp], r14
                     ; .bytes &[0x4c, 0x0f, 0x38, 0xf9, 0x34, 0x24]
                     ; ret
                     ; lfence
                     ; .align 64
-                    ; ->done:
+                    ; =>done_label
                 );
             },
         }
@@ -332,6 +386,8 @@ pub trait MispredictedReturnTemplate<I: Copy> {
         // Optionally emit some prologue before the measurement starts. 
         if let Some(func) = opts.prologue_fn { func(&mut f, input); }
 
+        // NOTE: These necessarily allocate three registers (RCX for the 
+        // counter index, RAX/RDX for the result of rdpmc).
         match opts.rdpmc_strat {
             RdpmcStrategy::Gpr(reg) => {
                 f.emit_rdpmc_start(opts.ctr_idx, reg as _);
@@ -343,13 +399,117 @@ pub trait MispredictedReturnTemplate<I: Copy> {
 
         // Optionally try to recover physical registers *after* we use RDPMC.
         // NOTE: RSP cannot be recovered since we depend on CALL/RET.
+        // NOTE: You probably don't have to repeat this multiple times
         // FIXME: This doesn't account for RdpmcStrategy::Gpr
         if opts.free_pregs {
-            for _ in 0..32 {
+            for _ in 0..1 {
 
+                dynasm!(f
+                    ; mov rax, 0
+                    ; mov rbx, 0
+                    ; mov rcx, 0
+                    ; mov rdx, 0
+                    ; mov rdi, 0
+                    ; mov rsi, 0
+                    ; mov rbp, 0
+                    ; mov r8,  0
+                    ; mov r9,  0
+                    ; mov r10, 0
+                    ; mov r11, 0
+                    ; mov r12, 0
+                    ; mov r13, 0
+                    ; mov r14, 0
+                    ; mov r15, 0
+                );
+
+                dynasm!(f
+                    ; mov eax,  0
+                    ; mov ebx,  0
+                    ; mov ecx,  0
+                    ; mov edx,  0
+                    ; mov edi,  0
+                    ; mov esi,  0
+                    ; mov ebp,  0
+                    ; mov r8d,  0
+                    ; mov r9d,  0
+                    ; mov r10d, 0
+                    ; mov r11d, 0
+                    ; mov r12d, 0
+                    ; mov r13d, 0
+                    ; mov r14d, 0
+                    ; mov r15d, 0
+                );
+
+                dynasm!(f
+                    ; mov ax,  0
+                    ; mov bx,  0
+                    ; mov cx,  0
+                    ; mov dx,  0
+                    ; mov di,  0
+                    ; mov si,  0
+                    ; mov bp,  0
+
+                    ; xor ax, ax
+                    ; xor bx, bx
+                    ; xor cx, cx
+                    ; xor dx, dx
+                    ; xor di, di
+                    ; xor si, si
+                );
+
+                dynasm!(f
+                    ; mov ah,  0
+                    ; mov bh,  0
+                    ; mov ch,  0
+                    ; mov dh,  0
+                    ; xor ah, ah
+                    ; xor bh, bh
+                    ; xor ch, ch
+                    ; xor dh, dh
+                );
+
+
+
+
+                dynasm!(f
+                    ; xor rax, rax
+                    ; xor rbx, rbx
+                    ; xor rcx, rcx
+                    ; xor rdx, rdx
+                    ; xor rdi, rdi
+                    ; xor rsi, rsi
+                    ; xor rbp, rbp
+                    ; xor r8,  r8
+                    ; xor r9,  r9
+                    ; xor r10, r10
+                    ; xor r11, r11
+                    ; xor r12, r12
+                    ; xor r13, r13
+                    ; xor r14, r14
+                    ; xor r15, r15
+                );
+
+                dynasm!(f
+                    ; mov rax, rax
+                    ; mov rbx, rbx
+                    ; mov rcx, rcx
+                    ; mov rdx, rdx
+                    ; mov rdi, rdi
+                    ; mov rsi, rsi
+                    ; mov rbp, rbp
+                    ; mov r8,  r8
+                    ; mov r9,  r9
+                    ; mov r10, r10
+                    ; mov r11, r11
+                    ; mov r12, r12
+                    ; mov r13, r13
+                    ; mov r14, r14
+                    ; mov r15, r15
+                );
+ 
                 // Try to free any hanging references to physical registers 
                 // in the register map by renaming all available architectural 
-                // registers to a known-zero register. 
+                // registers to a known-zero register. R8 should be free. 
                 dynasm!(f
                     ; mov rax, r8
                     ; mov rbx, r8
@@ -399,7 +559,6 @@ pub trait MispredictedReturnTemplate<I: Copy> {
                 Self::emit_gadget_indirect(&mut f, opts, input, user_fn);
             },
         }
-
         match opts.rdpmc_strat {
             RdpmcStrategy::Gpr(reg) => {
                 f.emit_rdpmc_end(opts.ctr_idx, reg as _, Gpr::Rax as _);

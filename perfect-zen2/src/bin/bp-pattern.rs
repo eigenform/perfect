@@ -251,7 +251,7 @@ fn main() {
         .emit();
 
     // Test all N-bit patterns of branch outcomes
-    let mut patterns = generate_patterns_exhaustive(8);
+    let mut patterns = generate_patterns_exhaustive(10);
     patterns.shuffle(&mut thread_rng());
 
     let res = PatternStimulus::run(&mut harness, patterns, None);

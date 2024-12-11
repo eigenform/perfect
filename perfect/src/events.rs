@@ -39,7 +39,8 @@ impl MaskDesc {
 pub struct EventDesc { 
     id: u16,
     mask: u8,
-    name: String
+    name: String,
+    unk: bool,
 }
 impl EventDesc { 
     pub fn new(id: u16, name: &str, mask: MaskDesc) -> Self { 
@@ -47,6 +48,7 @@ impl EventDesc {
             id, 
             mask: mask.mask,
             name: format!("{}.{}", name, mask.name),
+            unk: false
         }
     }
     pub fn new_unk(id: u16, mask: MaskDesc) -> Self { 
@@ -54,6 +56,7 @@ impl EventDesc {
             id,
             mask: mask.mask,
             name: format!("Event{:03x}:{:02x}", id, mask.mask),
+            unk: true,
         }
     }
     pub fn name(&self) -> &str { &self.name }
@@ -105,6 +108,20 @@ impl <E: AsEventDesc> EventSet<E> {
             self.set.insert(E::unk_desc(id, *mask));
         }
     }
+
+    /// Add all unit mask bits for a particular event to the set.
+    pub fn add_unknown_nomask(&mut self, id: u16) {
+        self.set.insert(E::unk_desc(id, 0x00));
+    }
+
+
+    /// Add all possible *combinations* of unit mask bits to the set.
+    pub fn add_unknown_all(&mut self, id: u16) {
+        for mask in 0x00..=0xff {
+            self.set.insert(E::unk_desc(id, mask));
+        }
+    }
+
 
     /// Clear this set.
     pub fn clear(&mut self) {

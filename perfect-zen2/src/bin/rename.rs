@@ -155,11 +155,10 @@ impl Experiment<usize> for MoveElimination {
 /// Results
 /// =======
 ///
-/// - Zero idioms on nonzero registers stall
+/// - Zero idioms on known-nonzero registers stall
 /// - Zero idioms on known-zero registers stall
 /// - Moves from nonzero registers stall
 /// - Moves from known-zero registers *do not* stall 
-///
 ///
 pub struct RenameResources;
 impl MispredictedReturnTemplate<usize> for RenameResources {}

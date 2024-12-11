@@ -3,8 +3,8 @@
 #![allow(unused_parens)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
+#![allow(unreachable_code)]
 #![allow(dead_code)]
-#![feature(asm_const)]
 
 
 pub mod asm;

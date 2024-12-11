@@ -20,7 +20,7 @@ use perfect::experiments::pmcdisc::*;
 #[command(verbatim_doc_comment)]
 pub struct Args { 
 
-    /// A comma-separated list of test groups to run and measure. 
+    /// A comma-separated list of test groups to run.
     #[arg(long, value_enum, value_delimiter = ',')]
     groups: Vec<TestGroupId>,
 
@@ -28,11 +28,9 @@ pub struct Args {
     #[arg(long, value_enum)]
     event_set: Option<PmcHammerEventSet>,
 
-    /// Run with all groups
+    /// Run all test groups
     #[arg(short, long)]
     all_groups: bool,
-
-
 }
 
 /// Predefined sets of events
@@ -52,6 +50,9 @@ pub enum PmcHammerEventSet {
 
     /// Stall cycles
     Stall,
+
+    /// Unknown or undefined events
+    Unknown,
 
 }
 impl PmcHammerEventSet {
@@ -110,14 +111,6 @@ impl PmcHammerEventSet {
                 Zen2Event::DeDisDispatchTokenStalls1(
                     DeDisDispatchTokenStalls1Mask::FpMiscRsrcStall
                 ),
-
-
-
-
-
-
-
-
             ]),
 
             Self::BranchPrediction => EventSet::new_from_slice(&[
@@ -147,48 +140,240 @@ impl PmcHammerEventSet {
                 Zen2Event::DeDisOpsFromDecoder(DeDisOpsFromDecoderMask::Int),
                 Zen2Event::DeDisOpsFromDecoder(DeDisOpsFromDecoderMask::Microcode),
             ]),
+
+            Self::Unknown => {
+                let mut set = EventSet::new();
+                //set.add_unknown(0x06);
+                //set.add_unknown(0x0f);
+
+                set.add_unknown(0x20);
+                set.add_unknown(0x21);
+                set.add_unknown(0x22);
+                set.add_unknown(0x23);
+                set.add_unknown(0x28);
+                set.add_unknown(0x2a);
+                set.add_unknown(0x2b);
+                set.add_unknown(0x2c);
+                set.add_unknown(0x2e);
+
+                set.add_unknown(0x30);
+                set.add_unknown(0x31);
+                set.add_unknown(0x33);
+                set.add_unknown(0x34);
+                set.add_unknown(0x38);
+                set.add_unknown(0x39);
+                set.add_unknown(0x3a);
+                set.add_unknown(0x3b);
+                set.add_unknown(0x3c);
+                set.add_unknown(0x3d);
+                set.add_unknown(0x3e);
+                set.add_unknown(0x3f);
+
+                set.add_unknown(0x42);
+                set.add_unknown(0x46);
+                set.add_unknown(0x48);
+                set.add_unknown(0x4d);
+                set.add_unknown(0x4e);
+                set.add_unknown_nomask(0x4f);
+
+                set.add_unknown(0x53);
+                set.add_unknown(0x54);
+                set.add_unknown(0x55);
+                set.add_unknown_nomask(0x56);
+                set.add_unknown(0x5c);
+                set.add_unknown(0x5d);
+                set.add_unknown(0x5e);
+
+                set.add_unknown(0x65);
+                set.add_unknown(0x67);
+                set.add_unknown(0x68);
+                set.add_unknown(0x69);
+                set.add_unknown(0x6a);
+                set.add_unknown(0x6b);
+                set.add_unknown(0x6e);
+
+                set.add_unknown(0x73);
+                set.add_unknown(0x74);
+                set.add_unknown(0x75);
+                set.add_unknown(0x7b);
+                set.add_unknown(0x7d);
+                set.add_unknown(0x7e);
+                set.add_unknown(0x7f);
+
+                set.add_unknown(0x86);
+                set.add_unknown_nomask(0x88);
+                set.add_unknown(0x89);
+
+                set.add_unknown_nomask(0x90);
+                set.add_unknown(0x92);
+                set.add_unknown(0x93);
+                set.add_unknown(0x95);
+                set.add_unknown(0x96);
+                set.add_unknown(0x97);
+                set.add_unknown(0x98);
+                set.add_unknown(0x99);
+                set.add_unknown(0x9a);
+                set.add_unknown_nomask(0x9b);
+                set.add_unknown_nomask(0x9c);
+                set.add_unknown_nomask(0x9d);
+                set.add_unknown_nomask(0x9e);
+                set.add_unknown_nomask(0x9f);
+
+                set.add_unknown(0xa0);
+                set.add_unknown(0xa1);
+                set.add_unknown_nomask(0xa2);
+                set.add_unknown_nomask(0xa3);
+                set.add_unknown_nomask(0xa4);
+                set.add_unknown(0xa5);
+                set.add_unknown(0xa6);
+                set.add_unknown(0xa7);
+                set.add_unknown_nomask(0xac);
+                set.add_unknown_nomask(0xad);
+
+                set.add_unknown(0xb0);
+                set.add_unknown(0xb9);
+                set.add_unknown(0xba);
+                set.add_unknown(0xbb);
+                set.add_unknown_nomask(0xbc);
+                set.add_unknown_nomask(0xbd);
+                set.add_unknown(0xbf);
+
+                set.add_unknown(0xcc);
+                set.add_unknown(0xcd);
+                set.add_unknown(0xce);
+                set.add_unknown(0xcf);
+
+                set.add_unknown_nomask(0xd0);
+                set.add_unknown_nomask(0xd5);
+                set.add_unknown(0xd6);
+                set.add_unknown(0xd7);
+                set.add_unknown(0xd8);
+                set.add_unknown(0xd9);
+                set.add_unknown(0xda);
+                set.add_unknown(0xdb);
+                set.add_unknown(0xdc);
+                set.add_unknown(0xdd);
+                set.add_unknown(0xde);
+                set.add_unknown(0xdf);
+
+
+
+                set.add_unknown(0x180);
+                set.add_unknown(0x181);
+                set.add_unknown(0x182);
+                set.add_unknown(0x183);
+                set.add_unknown(0x184);
+                set.add_unknown(0x185);
+                set.add_unknown(0x186);
+                set.add_unknown(0x187);
+                set.add_unknown(0x188);
+                set.add_unknown(0x189);
+                set.add_unknown(0x18a);
+                set.add_unknown(0x18b);
+                set.add_unknown(0x18c);
+                set.add_unknown(0x18d);
+                set.add_unknown(0x18e);
+                set.add_unknown(0x18f);
+
+                set.add_unknown(0x1a0);
+                set.add_unknown(0x1a1);
+                set.add_unknown(0x1a2);
+                set.add_unknown(0x1a3);
+                set.add_unknown(0x1a4);
+                set.add_unknown(0x1a5);
+                set.add_unknown(0x1a6);
+                set.add_unknown(0x1a7);
+                set.add_unknown(0x1a8);
+                set.add_unknown(0x1a9);
+                set.add_unknown(0x1aa);
+                set.add_unknown(0x1ab);
+                set.add_unknown(0x1ac);
+                set.add_unknown(0x1ad);
+                set.add_unknown(0x1ae);
+                set.add_unknown(0x1af);
+
+
+                set.add_unknown(0x1c0);
+                set.add_unknown(0x1c4);
+                set.add_unknown_nomask(0x1c5);
+                set.add_unknown(0x1c6);
+                set.add_unknown_nomask(0x1c9);
+                set.add_unknown(0x1ca);
+                set.add_unknown(0x1cf);
+
+                set.add_unknown(0x1d0);
+                set.add_unknown(0x1d1);
+                set.add_unknown(0x1d2);
+                set.add_unknown(0x1d3);
+                set.add_unknown(0x1d4);
+                set.add_unknown(0x1d5);
+                set.add_unknown_nomask(0x1d6);
+                set.add_unknown(0x1d7);
+                set.add_unknown(0x1d8);
+                set.add_unknown(0x1d9);
+                set.add_unknown(0x1da);
+                set.add_unknown_nomask(0x1dc);
+                set.add_unknown(0x1dd);
+                set.add_unknown(0x1de);
+                set.add_unknown(0x1df);
+
+                set
+            },
             _ => unimplemented!("{:?}", self),
         }
     }
 }
 
+/// Create the set of default events.
+fn create_default_events() -> EventSet<Zen2Event> {
+    let mut res = EventSet::new();
+    //res.add(Zen2Event::ExRetInstr(0x00));
+    //res.add(Zen2Event::ExRetCops(0x00));
+    //res.add(Zen2Event::ExRetUcodeOps(0x00));
+    //res.add(Zen2Event::ExRetUcodeInst(0x00));
+
+    res.add_unknown(0xa7);
+    res
+}
+
+
+pub struct EventResults { 
+    floor_min: usize,
+    result_min: usize,
+    normalized_min: i32,
+}
+
+pub struct EmitterResults { 
+    name: String,
+    disas: Vec<(String, String, bool)>,
+    by_event: HashMap<Zen2Event, EventResults>,
+}
+impl EmitterResults { 
+    pub fn record_for_event(&mut self, event: Zen2Event, res: EventResults) {
+        self.by_event.insert(event, res);
+    }
+}
+
+pub struct GroupResults { 
+    by_emitter: Vec<EmitterResults>,
+}
+
+
 fn main() {
     let arg = Args::parse();
 
-    let mut harness = HarnessConfig::default_zen2()
-        .emit();
+    let mut harness = HarnessConfig::default_zen2().emit();
 
-    // The set of default PMC events
-    let mut default_events = EventSet::new();
-    default_events.add_unknown(0x40);
-    default_events.add_unknown(0x41);
-    default_events.add_unknown(0x42);
-    default_events.add_unknown(0x43);
-    default_events.add_unknown(0x44);
-    default_events.add_unknown(0x45);
-    default_events.add_unknown(0x46);
-    default_events.add_unknown(0x47);
-    default_events.add_unknown(0x48);
-    default_events.add_unknown(0x49);
-    default_events.add_unknown(0x4a);
-    default_events.add_unknown(0x4b);
-    default_events.add_unknown(0x4c);
-    default_events.add_unknown(0x4d);
-    default_events.add_unknown(0x4e);
-    default_events.add_unknown(0x4f);
-
-    default_events.add(Zen2Event::LsNotHaltedCyc(0x00));
-
-
-
+    // Select which events will be measured
     let event_set = if let Some(events) = arg.event_set {
         events.set()
     } 
     else {
         println!("[*] Using default events");
-        default_events
+        create_default_events()
     };
 
+    // Select which groups of tests will be measured
     if arg.all_groups { 
         let all_groups = Vec::from_iter(
             TestGroupId::ALL_GROUPS.iter().map(|x| *x)
@@ -199,18 +384,186 @@ fn main() {
     }
 }
 
-pub struct PmcHammerArg {
-    groups: Vec<TestGroupId>,
-}
-
 pub struct PmcHammer;
 impl PmcHammer {
+
+    /// Measure a single case (with a single event) from a [`TestGroup`].
+    fn measure_event_for_case(harness: &mut PerfectHarness,
+        desc: &EventDesc,
+        floor_fn: MeasuredFn, asm_fn: MeasuredFn, 
+    ) -> EventResults
+    {
+        let floor = harness.measure(floor_fn, 
+            desc.id(), desc.mask(), 1024, InputMethod::Fixed(0,0)
+        ).unwrap();
+        let res = harness.measure(asm_fn, desc.id(), desc.mask(), 
+            1024, InputMethod::Fixed(0, 0)
+        ).unwrap();
+        let floor_min = floor.get_min();
+        let result_min = res.get_min();
+        let normalized_min = (result_min as i32 - floor_min as i32);
+
+        EventResults { floor_min, result_min, normalized_min }
+    }
+
+    /// Measure an entire [`TestGroup`].
+    fn measure_group(harness: &mut PerfectHarness,
+        group: &TestGroup,
+        events: &EventSet<Zen2Event>,
+    ) -> GroupResults
+    {
+        let mut res = GroupResults { 
+            by_emitter: Vec::new()
+        };
+
+        // Emit a floor measurement for this group. 
+        let floor_asm = if let Some(custom_floor) = group.floor {
+            Self::emit(None, None, group.common_measured, custom_floor)
+        } else {
+            Self::emit(None, None, group.common_measured, |mut f| {})
+        };
+        let rdr = floor_asm.reader();
+        let buf = rdr.lock();
+        let ptr = buf.ptr(AssemblyOffset(0));
+        let floor_fn: MeasuredFn = unsafe { 
+            std::mem::transmute(ptr)
+        };
+
+        for emitter in group.emitters {
+            // Emit the test
+            let asm = Self::emit(
+                group.prologue, group.epilogue, group.common_measured, 
+                emitter.func,
+            );
+            let asm_reader = asm.reader();
+            let asm_tgt_buf = asm_reader.lock();
+            let asm_tgt_ptr = asm_tgt_buf.ptr(AssemblyOffset(0));
+            let asm_fn: MeasuredFn = unsafe { 
+                std::mem::transmute(asm_tgt_ptr)
+            };
+
+            let inner = asm.labels()
+                .resolve_static(&StaticLabel::global("inner"))
+                .unwrap();
+            let inner_start = asm.labels()
+                .resolve_static(&StaticLabel::global("inner_start"))
+                .unwrap();
+            let inner_end = asm.labels()
+                .resolve_static(&StaticLabel::global("inner_end"))
+                .unwrap();
+
+            let disas = disas_chunk(&asm_tgt_buf, inner_start, inner_end);
+            let (istr, bstr) = disas_single(&asm_tgt_buf, inner);
+            let first_inst = disas[0].0.clone();
+
+            // FIXME: Account for presence of a prologue when using the 
+            // disassembly output as the name of an emitter for a single 
+            // instruction
+            let emitter_name = if let Some(d) = emitter.desc {
+                d.to_string()
+            } else { 
+                if emitter.single { 
+                    istr
+                } else { 
+                    "unnamed".to_string()
+                }
+            };
+
+            let mut emitter_results = EmitterResults { 
+                name: emitter_name,
+                disas,
+                by_event: HashMap::new()
+            };
+
+            // For each event, take measurements and collect them
+            for event in events.iter() {
+                let desc = event.as_desc();
+                let event_result = Self::measure_event_for_case(
+                    harness, &desc, floor_fn, asm_fn
+                );
+
+                // NOTE: Skip empty results for now
+                if event_result.normalized_min != 0 { 
+                    emitter_results.record_for_event(*event, event_result);
+                }
+            }
+            res.by_emitter.push(emitter_results);
+
+        }
+        res
+    }
+
+    fn run(harness: &mut PerfectHarness, 
+        events: EventSet<Zen2Event>,
+        groups: Vec<TestGroupId>,
+    ) 
+    {
+        // Measure all groups the user asked for
+        for group_id in groups { 
+            let group = group_id.group();
+
+            println!("=======================================================");
+            println!("[*] Running test group: '{}'", group.name);
+            let group_results = Self::measure_group(harness, group, &events);
+            for emitter_result in group_results.by_emitter {
+                println!("Emitter '{}'", emitter_result.name);
+                for line in emitter_result.disas {
+                    println!("  {:<32} {}", line.1, line.0);
+                }
+
+                for (event, result) in emitter_result.by_event.iter()
+                    .sorted_by(|x,y| { 
+                        x.0.as_desc().id().cmp(&y.0.as_desc().id())
+                        .then(x.0.as_desc().mask().cmp(&y.0.as_desc().mask())) 
+                    }) 
+                {
+                    if result.normalized_min == 0 { continue; }
+
+                    let desc = event.as_desc();
+                    println!("    min={:4} (flr={:4} obs={:4}) {:03x}:{:02x}:{}", 
+                        result.normalized_min,
+                        result.floor_min,
+                        result.result_min,
+                        desc.id(), desc.mask(),
+                        desc.name(),
+                    );
+                }
+                println!();
+            }
+            println!();
+
+        }
+
+
+
+        //for (event, results) in map.iter()
+        //    .sorted_by(|x,y| {
+        //        x.0.as_desc().id().cmp(&y.0.as_desc().id())
+        //            .then(x.0.as_desc().mask().cmp(&y.0.as_desc().mask()))
+        //    }) 
+        //{
+        //    let desc = event.as_desc();
+        //    println!("{:03x}:{:02x} {:?}", desc.id(),desc.mask(), desc.name());
+
+        //    for e in results.iter() {
+        //        ////println!("  {}", name);
+        //        println!("    min={:4} (floor={:4} obs={:4}) {}", 
+        //            e.normalized_min, e.floor_min, e.result_min, e.name
+        //        );
+        //    }
+        //}
+
+
+    }
+}
+
+impl PmcHammer { 
     fn emit(
         prologue: Option<fn(&mut X64Assembler)>, 
         epilogue: Option<fn(&mut X64Assembler)>, 
-        common: Option<fn(&mut X64Assembler)>, 
-        emit_inner: fn(&mut X64Assembler)) 
-        -> X64Assembler 
+        common_measured: Option<fn(&mut X64Assembler)>, 
+        emitter: fn(&mut X64Assembler),
+    ) -> X64Assembler 
     {
         let mut f = X64Assembler::new().unwrap();
         dynasm!(f
@@ -232,8 +585,8 @@ impl PmcHammer {
             ; .bytes NOP8
             ; .bytes NOP8
             ; .bytes NOP8
-            ; lfence
             ; mfence
+            ; lfence
         );
 
         f.emit_nop_sled(1024);
@@ -243,14 +596,16 @@ impl PmcHammer {
 
         // WARNING: This clobbers RAX, RCX, R15
         f.emit_rdpmc_start(0, Gpr::R15 as u8);
+        dynasm!(f ; ->inner_start:);
 
-        if let Some(emit_common) = common { 
+        if let Some(emit_common) = common_measured { 
             emit_common(&mut f);
         }
 
         dynasm!(f ; ->inner:);
-        emit_inner(&mut f);
+        emitter(&mut f);
 
+        dynasm!(f ; ->inner_end:);
         f.emit_rdpmc_end(0, Gpr::R15 as u8, Gpr::Rax as u8);
         if let Some(emit_epilogue) = epilogue {
             emit_epilogue(&mut f);
@@ -264,113 +619,4 @@ impl PmcHammer {
         f.commit().unwrap();
         f
     }
-
-    fn run(harness: &mut PerfectHarness, 
-        events: EventSet<Zen2Event>,
-        groups: Vec<TestGroupId>,
-    ) 
-    {
-        println!("{:016x?}", harness.harness_stack.as_ptr());
-
-        // Collect results keyed by PMC event
-        let mut map: HashMap<Zen2Event, Vec<(String, i32, usize, usize)>>
-            = HashMap::new();
-
-        for group_id in groups { 
-            let group = group_id.group();
-
-            // Emit the floor measurement for this group
-            let floor_asm = if let Some(custom_floor) = group.floor {
-                Self::emit(None, None, group.common, custom_floor)
-            } else {
-                Self::emit(None, None, group.common, |mut f| {} )
-            };
-            let rdr = floor_asm.reader();
-            let buf = rdr.lock();
-            let ptr = buf.ptr(AssemblyOffset(0));
-            let floor_fn: MeasuredFn = unsafe { 
-                std::mem::transmute(ptr)
-            };
-
-
-            println!("=======================================");
-            println!("[*] Test group: '{}'", group.name);
-            for emitter in group.emitters {
-                let mut results: HashMap<Zen2Event, MeasureResults> 
-                    = HashMap::new();
-
-                // Emit this test
-                let asm = Self::emit(
-                    group.prologue, group.epilogue, group.common, 
-                    *emitter
-                );
-                let asm_reader = asm.reader();
-                let asm_tgt_buf = asm_reader.lock();
-                let asm_tgt_ptr = asm_tgt_buf.ptr(AssemblyOffset(0));
-                let asm_fn: MeasuredFn = unsafe { 
-                    std::mem::transmute(asm_tgt_ptr)
-                };
-                let start_label_off = asm.labels()
-                    .resolve_static(&StaticLabel::global("inner"))
-                    .unwrap();
-                let (bytestr, inst_str) = disas_str_single(
-                    &asm_tgt_buf, start_label_off
-                );
-                let test_name = format!("{} ({})", inst_str, bytestr);
-                println!("{} ({})", inst_str, bytestr);
-
-                for event in events.iter() {
-                    let desc = event.as_desc();
-                    let floor = harness.measure(floor_fn, 
-                        desc.id(), desc.mask(), 1024, InputMethod::Fixed(0,0)
-                    ).unwrap();
-                    let res = harness.measure(asm_fn, desc.id(), desc.mask(), 
-                        1024, InputMethod::Fixed(0, 0)
-                    ).unwrap();
-
-                    let floor_min = floor.get_min();
-                    let res_min = res.get_min();
-                    let norm_min = (res_min as i32 - floor_min as i32);
-
-                    // NOTE: Skip empty results for now?
-                    if norm_min == 0 { 
-                        continue;
-                    }
-
-                    println!("  {:03x}:{:02x} {:42} min={:4} (floor={:4} obs={:4})",
-                        desc.id(), desc.mask(), desc.name(), 
-                        norm_min,
-                        floor_min, res_min,
-                    );
-                    if let Some(r) = map.get_mut(event) {
-                        r.push((test_name.clone(), norm_min, floor_min, res_min));
-                    } else {
-                        let mut r = Vec::new();
-                        r.push((test_name.clone(), norm_min, floor_min, res_min));
-                        map.insert(*event, r);
-                    }
-                }
-            }
-        }
-
-        for (event, results) in map.iter()
-            .sorted_by(|x,y| {
-                x.0.as_desc().id().cmp(&y.0.as_desc().id())
-                    .then(x.0.as_desc().mask().cmp(&y.0.as_desc().mask()))
-            }) 
-        {
-            let desc = event.as_desc();
-            println!("{:03x}:{:02x} {:?}", desc.id(),desc.mask(), desc.name());
-            for (name, norm_min, floor_min, result_min) in results.iter() {
-                //println!("  {}", name);
-                println!("    min={:4} (floor={:4} obs={:4}) {}", 
-                    norm_min, floor_min, result_min, name
-                );
-            }
-        }
-
-
-    }
 }
-
-
