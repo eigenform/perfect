@@ -27,23 +27,75 @@ fn main() {
 ///
 /// The dispatch width for Zen 2 cores is up to 6 macro-ops [mops] per cycle. 
 ///
-///
-/// Results
-/// =======
+/// Observations
+/// ============
 ///
 /// It seems like the size of a dispatch group is constrained by how the 
-/// instructions are decomposed into macro-ops? 
+/// instructions are decomposed into macro-ops? The following permutations 
+/// can be dispatched in a single cycle: 
 ///
-/// The following permutations can be dispatched in a single cycle: 
-///
-/// - 3 fastpath double instructions (3 instructions, 6 mops)
-/// - 5 fastpath single instructions (5 instructions, 5 mops)
-/// - 2 fastpath double + 2 fastpath single instructions (4 instructions, 6 mops)
-/// - 4 fastpath single + 1 fastpath double instructions (5 instructions, 6 mops)
+/// - 3 fastpath double instructions (6 mops)
+/// - 2 fastpath double + 2 fastpath single instructions (6 mops)
+/// - 1 fastpath double + 4 fastpath single instructions (6 mops)
+/// - 5 fastpath single instructions (5 mops)
 ///
 /// Note that we [seemingly] cannot dispatch 6 fastpath single instructions. 
 /// This is easy to observe with NOP: we never observe cycles where the full 
-/// 6 mops are dispatched. 
+/// 6 NOPs are dispatched simultaneously, and it always occurs over two cycles.
+/// I'm still not sure *why* this should be the case.
+///
+/// This seems to suggest that at least a single fastpath double instruction 
+/// is required to fill an entire dispatch group. This also appears to be 
+/// independent of the actual ordering of instructions; the fastpath double
+/// instruction can occupy any two slots within the group and still result in
+/// all six mops being dispatched simultaneously, ie. MUL is a fastpath double 
+/// instruction, and all of these can result in 6 dispatched mops: 
+///
+///     add; sub; and; mov; mul
+///     add; sub; and; mul; mov
+///     add; sub; mul; and; mov
+///     add; mul; sub; and; mov
+///     mul; add; sub; and; mov
+///
+/// This limitation on fastpath single instructions does not appear to be 
+/// related to the decode bandwidth. All of these tests were performed with 
+/// the op-cache disabled, and I think these tests are insulated from decode 
+/// latency. The SOG mentions that the decoders cannot run at full bandwidth 
+/// when the window is filled long encodings, but tests with six 15-byte NOPs
+/// still only take two cycles.
+///
+/// I thought it might be the case that the last macro-op in the group can 
+/// only come from a fastpath double instruction, but this isn't the case
+/// (since we can place the fastpath double instruction anywhere in the 
+/// window). The last two mops in the dispatch group *can* come from two 
+/// fastpath single instructions, ie.
+///
+///  NOP   NOP    o-MUL-o    NOP   NOP
+///   |     |     |     |     |     |
+///   v     v     v     v     v     v
+/// [mop] [mop] [mop] [mop] [mop] [mop]
+/// [ 0 ] [ 1 ] [ 2 ] [ 3 ] [ 4 ] [ 5 ]
+/// [----0----] [----1----] [----2----]
+///
+////  NOP   NOP  NOP    o-MUL-o    NOP
+///   |     |     |     |     |     |
+///   v     v     v     v     v     v
+/// [mop] [mop] [mop] [mop] [mop] [mop]
+/// [ 0 ] [ 1 ] [ 2 ] [ 3 ] [ 4 ] [ 5 ]
+/// [----0----] [----1----] [----2----]
+///
+///
+/// ... but this is apparently not when possible when a fastpath double 
+/// instruction does *not* appear earlier in the window: 
+///
+///  NOP   NOP   NOP   NOP   NOP   xxx
+///   |     |     |     |     |     |
+///   v     v     v     v     v     v
+/// [mop] [mop] [mop] [mop] [mop] [mop]
+/// [ 0 ] [ 1 ] [ 2 ] [ 3 ] [ 4 ] [ 5 ]
+/// [----0----] [----1----] [----2----]
+///
+///
 ///
 pub struct DispatchTest;
 impl DispatchTest {
@@ -51,7 +103,7 @@ impl DispatchTest {
     const CASES: StaticEmitterCases<usize> = StaticEmitterCases::new(&[
 
         // 3 double (6 dispatched mops)
-        EmitterDesc { desc: "xchg", 
+        EmitterDesc { desc: "xchg (3)", 
             func: |f, input| {
             dynasm!(f
                 ; xchg rax, rbx
@@ -73,7 +125,7 @@ impl DispatchTest {
 
 
         // 3 fastpath double (6 dispatched mops)
-        EmitterDesc { desc: "mul", 
+        EmitterDesc { desc: "mul (3)", 
             func: |f, input| {
             dynasm!(f
                 ; mul rdx
@@ -95,6 +147,19 @@ impl DispatchTest {
             );
         }}, 
 
+        // 4 single, 1 double (6 dispatched mops)
+        EmitterDesc { desc: "nop (3); mul; nop", 
+            func: |f, input| {
+            dynasm!(f
+                ; nop
+                ; nop
+                ; nop
+                ; mul rdx
+                ; nop
+            );
+        }}, 
+
+ 
         // 6 single (5 dispatched mops; 1 dispatched mop)
         EmitterDesc { desc: "nop (6)",
             func: |f, input| {
@@ -109,7 +174,7 @@ impl DispatchTest {
         }}, 
 
         // 4 single, 1 double (6 dispatched mops)
-        EmitterDesc { desc: "add; sub; and; or; xor", 
+        EmitterDesc { desc: "add; sub; and; load; mul", 
             func: |f, input| {
             dynasm!(f
                 ; add rax, 1
@@ -120,89 +185,82 @@ impl DispatchTest {
             );
         }}, 
 
+        // 6 single (4 dispatched mops; 2 dispatched mops)
+        EmitterDesc { desc: "load (6)",
+            func: |f, input| {
+            dynasm!(f
+                ; mov rdi, [0x1000]
+                ; mov rsi, [0x1100]
+                ; mov rax, [0x1200]
+                ; mov rbx, [0x1300]
+                ; mov rcx, [0x1400]
+                ; mov rcx, [0x1500]
+            );
+        }}, 
 
-       // 1 microcoded op (3, 2, 1 dispatched mop) (unknown order)
+        // 6 single (4 dispatched mops; 4 dispatched mops)
+        EmitterDesc { desc: "lea r64, [imm] (6)",
+            func: |f, input| {
+            dynasm!(f
+                ; lea rsi, [0x1100]
+                ; lea rax, [0x1200]
+                ; lea rbx, [0x1300]
+                ; lea rcx, [0x1400]
+                ; lea rdx, [0x1500]
+                ; lea rdi, [0x1600]
+            );
+        }}, 
+
+
+        // 6 single (5 dispatched mops; 1 dispatched mop)
+        EmitterDesc { desc: "lea r64, [r64+imm] (1); lea r64, [imm] (5)",
+            func: |f, input| {
+            dynasm!(f
+                ; lea rdi, [rip + 0x200]
+                ; lea rsi, [0x1100]
+                ; lea rax, [0x1200]
+                ; lea rbx, [0x1300]
+                ; lea rcx, [0x1400]
+                ; lea rdx, [0x1500]
+            );
+        }}, 
+
+        // 6 single (4 dispatched mops; 2 dispatched mops)
+        // NOTE: I think we can only dispatch 4 ALU ops per cycle
+        // (one for each ALSQ) 
+        EmitterDesc { desc: "add; add; add; add; add; add",
+            func: |f, input| {
+            dynasm!(f
+                ; add rax, rax
+                ; add rbx, rcx
+                ; add rdx, rcx
+                ; add rdi, rcx
+                ; add rsi, rcx
+                ; add rdi, rbx
+            );
+        }}, 
+
+        // 6 single (5 dispatched mops; 1 dispatched mops)
+        // NOTE: I think we can only dispatch 4 ALU ops per cycle
+        // (one for each ALSQ) 
+        EmitterDesc { desc: "add; add; add; add; load; load",
+            func: |f, input| {
+            dynasm!(f
+                ; add rax, [0x1000]
+                ; add rbx, [0x2000]
+                ; add rdx, [0x4000]
+                ; add rdi, rcx
+                ; mov [0x1000], rax
+            );
+        }}, 
+
+       // 1 microcoded instruction (3, 2, 1 dispatched mop) (unknown order)
        EmitterDesc { desc: "bsr", 
             func: |f, input| {
             dynasm!(f
                 ; bsr rax, rbx
             );
         }}, 
-
-        EmitterDesc { desc: "cpuid",
-            func: |f, input| {
-            dynasm!(f
-                ; cpuid
-            );
-        }}, 
-
-        //EmitterDesc { desc: "mov r9, rsp",
-        //    func: |f, input| {
-        //    dynasm!(f
-        //        ; mov r9, rsp
-        //    );
-        //}}, 
-
-        //EmitterDesc { desc: "mov r9, [0x100]",
-        //    func: |f, input| {
-        //    dynasm!(f
-        //        ; mov r9, [0x100]
-        //    );
-        //}}, 
-
-        //EmitterDesc { desc: "memfile case",
-        //    func: |f, input| {
-        //    dynasm!(f
-        //        ; mov [0x3f8], r9
-        //        ; mov r9, [0x3f8]
-        //    );
-        //}}, 
-
-        //EmitterDesc { desc: "stlf case",
-        //    func: |f, input| {
-        //    dynasm!(f
-        //        ; mov [0x1004], r9
-        //        ; mov r9, [0x1004]
-        //    );
-        //}}, 
-
-
-        //EmitterDesc { desc: "mul rax stalls on ALSQ2",
-        //    func: |f, input| {
-        //    for _ in 0..17 { 
-        //    dynasm!(f
-        //        ; mul rax
-        //    );
-        //    }
-        //}}, 
-
-        //EmitterDesc { desc: "mux rax stalls on ALSQ1/2",
-        //    func: |f, input| {
-        //    for _ in 0..18 { 
-        //    dynasm!(f
-        //        ; mul rax
-        //    );
-        //    }
-        //}}, 
-
-        //EmitterDesc { desc: "div r10 stalls on ALSQ2",
-        //    func: |f, input| {
-        //    for _ in 0..18 { 
-        //    dynasm!(f
-        //        ; div r10
-        //    );
-        //    }
-        //}}, 
-
-        //EmitterDesc { desc: "lea AGSQ stall",
-        //    func: |f, input| {
-        //    for _ in 0..32 { 
-        //    dynasm!(f
-        //        ; lea r10, [rip]
-        //    );
-        //    }
-        //}}, 
-
     ]);
 
     fn emit(case_emitter: fn(&mut X64Assembler, usize)) -> X64Assembler {
@@ -328,7 +386,8 @@ impl DispatchTest {
                 let rmin = results.get_min();
                 let rmax = results.get_max();
                 let norm_min = (rmin as i32 - fmin as i32);
-                //if fmin == 0 { continue; }
+
+                if norm_min == 0 { continue; }
 
                 println!("norm_min={:4} (fmin={:4} fmax={:4}) (rmin={:4} rmax={:4}) {:03x}:{:02x} {}",
                     norm_min,
