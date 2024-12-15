@@ -24,8 +24,11 @@ fn main() {
 /// - "Microcoded":     >2 macro-ops
 ///
 /// Each macro-op [mop] corresponds with up to 2 micro-ops [uop].
+/// 
+/// Some other relevant facts from the Family 17h SOG: 
 ///
-/// The dispatch width for Zen 2 cores is up to 6 macro-ops [mops] per cycle. 
+/// - Up to 4 instructions can be decoded per cycle
+/// - Up to 6 macro-ops [mops] can be dispatched per cycle
 ///
 /// Observations
 /// ============
@@ -42,14 +45,11 @@ fn main() {
 /// Note that we [seemingly] cannot dispatch 6 fastpath single instructions. 
 /// This is easy to observe with NOP: we never observe cycles where the full 
 /// 6 NOPs are dispatched simultaneously, and it always occurs over two cycles.
-/// I'm still not sure *why* this should be the case.
 ///
-/// This seems to suggest that at least a single fastpath double instruction 
-/// is required to fill an entire dispatch group. This also appears to be 
-/// independent of the actual ordering of instructions; the fastpath double
-/// instruction can occupy any two slots within the group and still result in
-/// all six mops being dispatched simultaneously, ie. MUL is a fastpath double 
-/// instruction, and all of these can result in 6 dispatched mops: 
+/// It seems like at least one fastpath double instruction is required to 
+/// achieve full throughput. The location of the fastpath double mops within
+/// the dispatch group does not seem to matter, ie. all of the following 
+/// cases lead to 6 dispatched mops in a single cycle: 
 ///
 ///     add; sub; and; mov; mul
 ///     add; sub; and; mul; mov
@@ -57,45 +57,8 @@ fn main() {
 ///     add; mul; sub; and; mov
 ///     mul; add; sub; and; mov
 ///
-/// This limitation on fastpath single instructions does not appear to be 
-/// related to the decode bandwidth. All of these tests were performed with 
-/// the op-cache disabled, and I think these tests are insulated from decode 
-/// latency. The SOG mentions that the decoders cannot run at full bandwidth 
-/// when the window is filled long encodings, but tests with six 15-byte NOPs
-/// still only take two cycles.
-///
-/// I thought it might be the case that the last macro-op in the group can 
-/// only come from a fastpath double instruction, but this isn't the case
-/// (since we can place the fastpath double instruction anywhere in the 
-/// window). The last two mops in the dispatch group *can* come from two 
-/// fastpath single instructions, ie.
-///
-///  NOP   NOP    o-MUL-o    NOP   NOP
-///   |     |     |     |     |     |
-///   v     v     v     v     v     v
-/// [mop] [mop] [mop] [mop] [mop] [mop]
-/// [ 0 ] [ 1 ] [ 2 ] [ 3 ] [ 4 ] [ 5 ]
-/// [----0----] [----1----] [----2----]
-///
-////  NOP   NOP  NOP    o-MUL-o    NOP
-///   |     |     |     |     |     |
-///   v     v     v     v     v     v
-/// [mop] [mop] [mop] [mop] [mop] [mop]
-/// [ 0 ] [ 1 ] [ 2 ] [ 3 ] [ 4 ] [ 5 ]
-/// [----0----] [----1----] [----2----]
-///
-///
-/// ... but this is apparently not when possible when a fastpath double 
-/// instruction does *not* appear earlier in the window: 
-///
-///  NOP   NOP   NOP   NOP   NOP   xxx
-///   |     |     |     |     |     |
-///   v     v     v     v     v     v
-/// [mop] [mop] [mop] [mop] [mop] [mop]
-/// [ 0 ] [ 1 ] [ 2 ] [ 3 ] [ 4 ] [ 5 ]
-/// [----0----] [----1----] [----2----]
-///
-///
+/// I think this means that the dispatch interface selects up to 6 macro-ops
+/// *from a window consisting of the oldest 5 instructions in the op queue*. 
 ///
 pub struct DispatchTest;
 impl DispatchTest {
