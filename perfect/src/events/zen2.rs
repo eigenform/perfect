@@ -24,6 +24,35 @@ impl FpRetSseAvxOpsMask {
 }
 
 #[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash)]
+pub enum LsL1DtlbMissMask {
+    TlbReload4KL2Hit,
+    TlbReload32KL2Hit,
+    TlbReload2ML2Hit,
+    TlbReload1GL2Hit,
+    TlbReload4KL2Miss,
+    TlbReload32KL2Miss,
+    TlbReload2ML2Miss,
+    TlbReload1GL2Miss,
+    Unk(u8),
+}
+impl LsL1DtlbMissMask {
+    pub fn desc(&self) -> MaskDesc { 
+        match self { 
+            Self::TlbReload4KL2Hit => MaskDesc::new(0x01,  "TlbReload4KL2Hit"),
+            Self::TlbReload32KL2Hit => MaskDesc::new(0x02, "TlbReload32KL2Hit"),
+            Self::TlbReload2ML2Hit => MaskDesc::new(0x04,  "TlbReload2ML2Hit"),
+            Self::TlbReload1GL2Hit => MaskDesc::new(0x08,  "TlbReload1GL2Hit"),
+            Self::TlbReload4KL2Miss => MaskDesc::new(0x10, "TlbReload4KL2Miss"),
+            Self::TlbReload32KL2Miss => MaskDesc::new(0x20,"TlbReload32KL2Miss"),
+            Self::TlbReload2ML2Miss => MaskDesc::new(0x40, "TlbReload2ML2Miss"),
+            Self::TlbReload1GL2Miss => MaskDesc::new(0x80, "TlbReload1GL2Miss"),
+            Self::Unk(x) => MaskDesc::new(*x, "Unk"),
+        }
+    }
+}
+
+
+#[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash)]
 pub enum LsBadStatus2Mask {
     UnkWidthMismatch,
     Unk(u8),
@@ -505,8 +534,14 @@ pub enum Zen2Event {
     // 0x44
 
     // 0x45 - LsL1DTlbMiss?
+    // 0x45:04 - prefetching kernel
+    LsL1DTlbMiss(LsL1DtlbMissMask),
 
-    // 0x46
+    // 0x46 - LsTablewalker?  (from 17h, Model 01h PPR)
+    // 0x46:01 - 'PerfmonTablewalkAllocDside0'
+    // 0x46:02 - 'PerfmonTablewalkAllocDside1'
+    // 0x46:04 - 'PerfmonTablewalkAllocIside0'
+    // 0x46:08 - 'PerfmonTablewalkAllocIside1'
 
     // 0x47
     LsMisalLoads(u8),
@@ -1136,6 +1171,10 @@ impl AsEventDesc for Zen2Event {
             Self::LsMabAlloc(m) => {
                 let mask = m.desc();
                 EventDesc::new(0x041, "LsMabAlloc", mask)
+            },
+            Self::LsL1DTlbMiss(m) => {
+                let mask = m.desc();
+                EventDesc::new(0x045, "LsL1DTlbMiss", mask)
             },
             Self::LsMisalLoads(x) => {
                 let mask = MaskDesc::new_unk(*x);

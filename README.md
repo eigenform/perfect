@@ -63,6 +63,7 @@ experiments.
 - [Validating/Discovering PMC Events](./perfect-zen2/src/bin/pmc.rs)
 - [Observing CVE-2023-20593 (Zenbleed)](./perfect-zen2/src/bin/zenbleed.rs)
 - [Observing Speculative Loads with Timing](./perfect-zen2/src/bin/flush-reload.rs)
+- [PREFETCH Behavior](./perfect-zen2/src/bin/prefetch.rs)
 
 
 ## Environment

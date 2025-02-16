@@ -30,6 +30,14 @@ fn main() {
 /// - Up to 4 instructions can be decoded per cycle
 /// - Up to 6 macro-ops [mops] can be dispatched per cycle
 ///
+/// Tests
+/// =====
+///
+/// In general, the strategy here is: 
+///
+/// - Emit some short string of instructions
+/// - Measure the number of cycles and the number of ops dispatched each cycle
+///
 /// Observations
 /// ============
 ///
@@ -57,8 +65,13 @@ fn main() {
 ///     add; mul; sub; and; mov
 ///     mul; add; sub; and; mov
 ///
-/// I think this means that the dispatch interface selects up to 6 macro-ops
-/// *from a window consisting of the oldest 5 instructions in the op queue*. 
+/// In summary, I think this means that: 
+///
+/// - The "dispatch window" (set of instructions at the head of the op queue 
+///   which are eligible to be dispatched) consists of 5 instructions 
+///
+/// - The "dispatch group" (set of macro-ops being removed from the queue) 
+///   consists of up to 6 macro-ops from the window
 ///
 pub struct DispatchTest;
 impl DispatchTest {
@@ -123,19 +136,6 @@ impl DispatchTest {
         }}, 
 
  
-        // 6 single (5 dispatched mops; 1 dispatched mop)
-        EmitterDesc { desc: "nop (6)",
-            func: |f, input| {
-            dynasm!(f
-                ; nop
-                ; nop
-                ; nop
-                ; nop
-                ; nop
-                ; nop
-            );
-        }}, 
-
         // 4 single, 1 double (6 dispatched mops)
         EmitterDesc { desc: "add; sub; and; load; mul", 
             func: |f, input| {
@@ -224,6 +224,20 @@ impl DispatchTest {
                 ; bsr rax, rbx
             );
         }}, 
+
+        // 6 single (5 dispatched mops; 1 dispatched mop)
+        EmitterDesc { desc: "nop (6)",
+            func: |f, input| {
+            dynasm!(f
+                ; nop
+                ; nop
+                ; nop
+                ; nop
+                ; nop
+                ; nop
+            );
+       }}, 
+
     ]);
 
     fn emit(case_emitter: fn(&mut X64Assembler, usize)) -> X64Assembler {

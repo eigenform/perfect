@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # 0xc00110e3, bit 1 is "suppress non-branch predictions" on Zen2
+# (ie. this is the mitigation for branch type confusion)
 
 if [[ -z ${1} ]]; then echo "usage: ${0} [off|on]"; exit -1; fi
 if [[ $EUID != 0 ]]; then echo "must be root"; exit -1; fi

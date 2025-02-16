@@ -219,7 +219,7 @@ impl FlushReload {
     /// Probe all of the addresses that the victim might have accessed.
     ///
     /// NOTE: We cannot *sequentially* probe this array without polluting 
-    /// the state of the cache, since this would cause the data prefetcher
+    /// the state of the cache, since we might expect the data prefetcher
     /// to access all of the lines we are trying to measure. 
     /// Instead, perform accesses on each element in a random order.
     fn run_probe(harness: &mut PerfectHarness, probe_fn: MeasuredFn) 

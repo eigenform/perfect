@@ -33,27 +33,12 @@ fn main() {
 /// If we wanted to create pressure, we'd need to dispatch many instructions
 /// but somehow prevent them from retiring.
 ///
-/// Note that there are different figures for the integer PRF capacity in 
-/// different versions of the Family 17h SOG. 
-///
-/// > "SOG for AMD Family 17h Processors",
-/// > Document #55723, Rev 3.01 (dated Feb. 2021): 
-/// >
-/// > *"The integer physical register file (PRF) consists of 168 registers, 
-/// > with up to 38 per thread mapped to architectural state or 
-/// > microarchitectural temporary state."*
-///
 /// > "SOG for AMD Family 17h Models 30h and Greater Processors",
 /// > Document #56305, Rev 3.02 (dated March 2020):
 /// > 
 /// > *"The integer physical register file (PRF) consists of 180 registers, 
 /// > with up to 38 per thread mapped to architectural state or 
 /// > microarchitectural temporary state."*
-///
-/// We expect the results to be close to either of these - although, 
-/// presumably the SOG for "Models 30h and Greater" refers only to the server 
-/// parts (I think these are the EPYC "Rome" parts). I'm documenting this on
-/// the 3950X, which is a desktop part. 
 ///
 /// Test
 /// ====
@@ -93,6 +78,9 @@ fn main() {
 ///
 /// - It never happens shortly after rebooting the machine
 /// - After observing it, it seems stable (I never see it return to 160)
+///
+/// Presumably this means there are typically `(180 - 160) = 20` physical 
+/// registers that are still being used when we run this test. 
 ///
 
 pub struct IntPrfPressure;
@@ -289,7 +277,7 @@ impl IntPrfPressure {
                     let results = harness.measure(asm_fn, 
                         desc.id(), desc.mask(), 256, InputMethod::Fixed(0, 0)
                     ).unwrap();
-                    case_res.record(*event, input, results);
+                    case_res.record(*event, input, results.data);
                 }
             }
             exp_results.push(case_res.clone());

@@ -35,7 +35,7 @@ impl MaskDesc {
 /// for a particular platform. The [AsEventDesc] trait represents an interface
 /// between this crate and those platform-specific types.
 ///
-#[derive(PartialOrd, Ord, PartialEq, Eq)]
+#[derive(Clone, PartialOrd, Ord, PartialEq, Eq)]
 pub struct EventDesc { 
     id: u16,
     mask: u8,

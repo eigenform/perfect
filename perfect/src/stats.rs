@@ -6,23 +6,87 @@ use itertools::*;
 use crate::harness::*;
 use crate::events::*;
 
+/// A list of observed values. 
+///
+/// In general, each entry in the list is a *difference* between two values
+/// (returned by RDPMC or some other instruction providing a counter). 
+#[derive(Clone)]
+pub struct RawResults(pub Vec<usize>);
+impl RawResults {
+    /// Produce a set of "normalized" values with the given floor value. 
+    pub fn normalize(&self, floor_min: i64) -> NormalizedResults {
+        NormalizedResults(
+            self.0.iter().map(|x| *x as i64 - floor_min as i64).collect()
+        )
+    }
+}
+
+/// A *normalized* list of observed values. 
+#[derive(Clone)]
+pub struct NormalizedResults(pub Vec<i64>);
+
+/// Implemented on types which contain a list of observed values. 
+pub trait ResultList<D: Copy + Ord> { 
+    /// Return a reference to the list of values
+    fn data(&self) -> &Vec<D>;
+    /// Return the number of observed values
+    fn len(&self) -> usize { self.data().len() }
+    /// Return the minimum value in the list
+    fn get_min(&self) -> D { *self.data().iter().min().unwrap() }
+    /// Return the maximum value in the list
+    fn get_max(&self) -> D { *self.data().iter().max().unwrap() }
+    /// Return an iterator over values in the list
+    fn iter<'a>(&'a self) -> impl Iterator<Item=&'a D> where D: 'a { 
+        self.data().iter() 
+    }
+    /// Return a histogram which counts the distribution of values
+    fn histogram(&self) -> BTreeMap<D, usize> {
+        let mut dist = BTreeMap::new();
+        for r in self.data().iter() {
+            if let Some(cnt) = dist.get_mut(r) {
+                *cnt += 1;
+            } else {
+                dist.insert(*r, 1);
+            }
+        }
+        dist
+    }
+}
+impl ResultList<usize> for RawResults {
+    fn data(&self) -> &Vec<usize> { &self.0 }
+}
+impl ResultList<i64> for NormalizedResults {
+    fn data(&self) -> &Vec<i64> { &self.0 }
+}
+
+
+
 /// Set of results associated with a particular PMC event. 
+///
+/// `I` is a type representing some variable associated with this set of 
+/// observations (for instance, a variable number of emitted instructions). 
 #[derive(Clone)]
 pub struct EventResults<I: Copy + Clone> {
-    /// Input associated with each set of observations
+    /// The event used to produce this data
+    pub event: EventDesc,
+    /// Some variable input value associated with each set of observations
     pub inputs: Vec<I>,
     /// Sets of observations
-    pub data: Vec<MeasureResults>,
+    pub data: Vec<RawResults>,
 }
 impl <I: Copy + Clone> EventResults<I> {
-    pub fn new() -> Self { 
+
+    /// Create an empty set of observations for the given event `E`
+    pub fn new<E: AsEventDesc>(event: E) -> Self { 
         Self { 
+            event: event.as_desc(),
             data: Vec::new(),
             inputs: Vec::new(),
         }
     }
 
-    pub fn push(&mut self, data: MeasureResults, input: I) {
+    /// Add an observation to the set. 
+    pub fn push(&mut self, data: RawResults, input: I) {
         self.data.push(data);
         self.inputs.push(input);
     }
@@ -32,7 +96,7 @@ impl <I: Copy + Clone> EventResults<I> {
         let mut global_max = usize::MIN;
         let mut input = self.inputs[0];
         for (idx, results) in self.data.iter().enumerate() {
-            let local_max = results.data.iter().max().unwrap();
+            let local_max = results.iter().max().unwrap();
             if *local_max > global_max { 
                 global_max = *local_max;
                 input = self.inputs[idx];
@@ -46,7 +110,7 @@ impl <I: Copy + Clone> EventResults<I> {
         let mut global_min = usize::MAX;
         let mut input = self.inputs[0];
         for (idx, results) in self.data.iter().enumerate() {
-            let local_min = results.data.iter().max().unwrap();
+            let local_min = results.iter().max().unwrap();
             if *local_min < global_min { 
                 global_min = *local_min;
                 input = self.inputs[idx];
@@ -57,39 +121,40 @@ impl <I: Copy + Clone> EventResults<I> {
 
     pub fn local_avg_f32(&self) -> Vec<f32> {
         self.data.iter().map(|d| {
-            let len = d.data.len();
-            d.data.iter().sum::<usize>() as f32 / len as f32
+            let len = d.len();
+            d.iter().sum::<usize>() as f32 / len as f32
         }).collect()
     }
 
     pub fn local_avg_usize(&self) -> Vec<usize> {
         self.data.iter().map(|d| {
-            let len = d.data.len();
-            d.data.iter().sum::<usize>() / len
+            let len = d.len();
+            d.iter().sum::<usize>() / len
         }).collect()
     }
 
 
     /// Return a list of the minimum observed values across all results. 
     pub fn local_min(&self) -> Vec<usize> {
-        self.data.iter().map(|d| *d.data.iter().min().unwrap()).collect()
+        self.data.iter().map(|d| *d.iter().min().unwrap()).collect()
     }
 
     /// Return a list of the maximum observed values across all results. 
     pub fn local_max(&self) -> Vec<usize> {
-        self.data.iter().map(|d| *d.data.iter().max().unwrap()).collect()
+        self.data.iter().map(|d| *d.iter().max().unwrap()).collect()
     }
 
     pub fn local_minmax(&self) -> Vec<(usize, usize)> {
-        self.data.iter().map(|d| *d.data.iter().min().unwrap())
-            .zip(self.data.iter().map(|d| *d.data.iter().max().unwrap()))
-            .collect()
+        //self.data.iter().map(|d| *d.data.iter().min().unwrap())
+        //    .zip(self.data.iter().map(|d| *d.data.iter().max().unwrap()))
+        //    .collect()
+        std::iter::zip(self.local_min(), self.local_max()).collect()
     }
 
 
     pub fn local_min_first_nonzero(&self) -> Option<(usize, I)> { 
         let local_mins: Vec<usize> = self.data.iter()
-            .map(|d| *d.data.iter().min().unwrap())
+            .map(|d| *d.iter().min().unwrap())
             .collect();
 
         let nz = local_mins.iter().enumerate().find(|(i,m)| **m != 0);
@@ -104,7 +169,7 @@ impl <I: Copy + Clone> EventResults<I> {
     pub fn local_min_pairwise_diff(&self) -> Vec<isize> {
 
         let local_mins: Vec<usize> = self.data.iter()
-            .map(|d| *d.data.iter().min().unwrap())
+            .map(|d| *d.iter().min().unwrap())
             .collect();
 
         let mut diffs = Vec::new();
@@ -140,11 +205,11 @@ impl <E: AsEventDesc, I: Copy + Clone> ExperimentCaseResults<E, I> {
 
     /// Record a set of results along with the associated input data and the 
     /// particular PMC event. 
-    pub fn record(&mut self, event: E, input: I, data: MeasureResults) {
+    pub fn record(&mut self, event: E, input: I, data: RawResults) {
         if let Some(mut records) = self.data.get_mut(&event) {
             records.push(data, input);
         } else { 
-            let mut res = EventResults::new();
+            let mut res = EventResults::new(event);
             res.push(data, input);
             self.data.insert(event, res);
         }
@@ -181,57 +246,57 @@ impl <E: AsEventDesc, I: Copy + std::fmt::Display> ExperimentResults<E, I> {
         )
     }
 
-    pub fn write_results_freq(&self) {
-        for case_results in self.data.iter() {
-            for (event, event_results) in case_results.data.iter() {
-                let path = Self::generate_filename(
-                    case_results, event, event_results
-                );
-                let mut f = std::fs::OpenOptions::new()
-                    .write(true).create(true).truncate(true)
-                    .open(&path).unwrap();
+    //pub fn write_results_freq(&self) {
+    //    for case_results in self.data.iter() {
+    //        for (event, event_results) in case_results.data.iter() {
+    //            let path = Self::generate_filename(
+    //                case_results, event, event_results
+    //            );
+    //            let mut f = std::fs::OpenOptions::new()
+    //                .write(true).create(true).truncate(true)
+    //                .open(&path).unwrap();
 
-                println!("[*] Writing min/avg/max results to {}", path);
-                writeln!(f, "# {}", event.as_desc().name()).unwrap();
+    //            println!("[*] Writing min/avg/max results to {}", path);
+    //            writeln!(f, "# {}", event.as_desc().name()).unwrap();
 
-                let one_counts = event_results.data.iter()
-                    .map(|results| results.count(1));
+    //            let one_counts = event_results.data.iter()
+    //                .map(|results| results.count(1));
 
-                let iterator = event_results.inputs.iter()
-                    .zip(one_counts);
-                for ((input, cnt)) in iterator {
-                    writeln!(f, "input={} cnt={}",
-                        input, cnt
-                    ).unwrap();
-                }
-            }
-        }
+    //            let iterator = event_results.inputs.iter()
+    //                .zip(one_counts);
+    //            for ((input, cnt)) in iterator {
+    //                writeln!(f, "input={} cnt={}",
+    //                    input, cnt
+    //                ).unwrap();
+    //            }
+    //        }
+    //    }
 
-    }
+    //}
 
-    // NOTE: Temporary hack for dumping results to disk
-    pub fn write_results(&self) {
-        for case_results in self.data.iter() {
-            for (event, event_results) in case_results.data.iter() {
-                let path = Self::generate_filename(
-                    case_results, event, event_results
-                );
-                let mut f = std::fs::OpenOptions::new()
-                    .write(true).create(true).truncate(true)
-                    .open(&path).unwrap();
+    //// NOTE: Temporary hack for dumping results to disk
+    //pub fn write_results(&self) {
+    //    for case_results in self.data.iter() {
+    //        for (event, event_results) in case_results.data.iter() {
+    //            let path = Self::generate_filename(
+    //                case_results, event, event_results
+    //            );
+    //            let mut f = std::fs::OpenOptions::new()
+    //                .write(true).create(true).truncate(true)
+    //                .open(&path).unwrap();
 
-                println!("[*] Writing min/avg/max results to {}", path);
-                writeln!(f, "# {}", event.as_desc().name()).unwrap();
-                let minmax = event_results.local_minmax();
-                let avgs = event_results.local_avg_usize();
-                let iterator = event_results.inputs.iter()
-                    .zip(avgs.iter()).zip(minmax.iter());
-                for ((input, avg), (min, max)) in iterator {
-                    writeln!(f, "input={} min={} avg={} max={}", 
-                        input, min, avg, max
-                    ).unwrap();
-                }
-            }
-        }
-    }
+    //            println!("[*] Writing min/avg/max results to {}", path);
+    //            writeln!(f, "# {}", event.as_desc().name()).unwrap();
+    //            let minmax = event_results.local_minmax();
+    //            let avgs = event_results.local_avg_usize();
+    //            let iterator = event_results.inputs.iter()
+    //                .zip(avgs.iter()).zip(minmax.iter());
+    //            for ((input, avg), (min, max)) in iterator {
+    //                writeln!(f, "input={} min={} avg={} max={}", 
+    //                    input, min, avg, max
+    //                ).unwrap();
+    //            }
+    //        }
+    //    }
+    //}
 }

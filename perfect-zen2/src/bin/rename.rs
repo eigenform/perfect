@@ -284,7 +284,7 @@ impl RenameResources {
                     let results = harness.measure(asm_fn, 
                         desc.id(), desc.mask(), 256, InputMethod::Fixed(0, 0)
                     ).unwrap();
-                    case_res.record(*event, i, results);
+                    case_res.record(*event, i, results.data);
                 }
             }
             exp_results.push(case_res.clone());

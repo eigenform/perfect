@@ -79,6 +79,11 @@ impl SpeculativeDecodeFuzz {
             cases.push(enc.as_bytes());
         }
 
+        // Generate totally random 16-byte blocks
+        //for _ in 0..4096 {
+        //    cases.push(rng.gen());
+        //}
+
 
         for case in cases.iter() { 
             let asm = Self::emit(opts, *case, Self::emit_random_instr);

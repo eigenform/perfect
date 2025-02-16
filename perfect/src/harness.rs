@@ -16,6 +16,7 @@ use dynasmrt::{
     x64::X64Relocation
 };
 use crate::util;
+use crate::stats::{RawResults, ResultList};
 use crate::asm::{ X64Assembler, X64AssemblerFixed, Emitter, Gpr, VectorGpr, };
 use crate::asm::{ NOP6, NOP8 };
 
@@ -169,7 +170,7 @@ impl std::fmt::Debug for VectorGprState {
 #[derive(Clone)]
 pub struct MeasureResults {
     /// Set of observations from the performance counters
-    pub data: Vec<usize>,
+    pub data: RawResults,
 
     /// The PMC event associated with the result data.
     pub event: u16,
@@ -188,9 +189,9 @@ pub struct MeasureResults {
 }
 impl MeasureResults {
     /// Return the minimum observed value
-    pub fn get_min(&self) -> usize { *self.data.iter().min().unwrap() }
+    pub fn get_min(&self) -> usize { *self.data.0.iter().min().unwrap() }
     /// Return the maximum observed value
-    pub fn get_max(&self) -> usize { *self.data.iter().max().unwrap() }
+    pub fn get_max(&self) -> usize { *self.data.0.iter().max().unwrap() }
 
     /// Collate observations into buckets.
     ///
@@ -198,7 +199,7 @@ impl MeasureResults {
     /// number of times each value was observed.
     pub fn get_distribution(&self) -> BTreeMap<usize, usize> {
         let mut dist = BTreeMap::new();
-        for r in self.data.iter() {
+        for r in self.data.0.iter() {
             if let Some(cnt) = dist.get_mut(r) {
                 *cnt += 1;
             } else {
@@ -403,7 +404,7 @@ impl HarnessConfig {
     pub fn emit(self) -> PerfectHarness {
         if let Some(pinned_core) = self.pinned_core {
             util::PerfectEnv::pin_to_core(pinned_core);
-            println!("[*] Pinned to core {}", pinned_core);
+            //println!("[*] Pinned to core {}", pinned_core);
         }
         if let Some((base, len)) = self.arena_alloc {
             let mmap_min_addr = util::PerfectEnv::procfs_mmap_min_addr();
@@ -973,7 +974,7 @@ impl PerfectHarness {
         self.vgpr_state.clear();
 
         Ok(MeasureResults {
-            data: results,
+            data: RawResults(results),
             event, mask,
             gpr_dumps, vgpr_dumps,
             inputs: Some(inputs),

@@ -120,7 +120,7 @@ impl Zenbleed {
             // Prelude
             Some(|f| { 
                 dynasm!(f
-                    ; mov r10, 0
+                    ; xor rax, rax
                 )
             }),
 
@@ -128,7 +128,6 @@ impl Zenbleed {
             |f| {
             dynasm!(f
                 ; mov rax, 0xdead_c0de
-
             )},
         );
 
@@ -290,6 +289,11 @@ impl Zenbleed {
     /// This lets you perform speculative computations, and then uses the 
     /// bug to make the result architecturally visible (albeit indirectly
     /// and somewhat unreliably). Good luck. 
+    ///
+    /// Assumptions
+    /// ===========
+    ///
+    /// - R8 is used to track 'iters' (and should not be used) 
     ///
     fn emit_leak_spec_rax(
         f: &mut X64Assembler, 
