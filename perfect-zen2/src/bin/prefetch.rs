@@ -47,10 +47,9 @@ fn main() {
 /// not the page-table entries defining a *privileged* virtual address space
 /// are resident somewhere in the TLB hierarchy. 
 ///
-/// This is especially important in modern operating systems which attempt 
-/// to hide information about the kernel's virtual address space from 
-/// unprivileged users. 
-///
+/// This is particularly relevant in cases where system software attempts to 
+/// hide information about a "privileged" address space from unprivileged 
+/// users (ie. in security hardening features like KASLR).
 ///
 /// [^1]: [Prefetch Side-Channel Attacks: Bypassing SMAP and Kernel ASLR](https://gruss.cc/files/prefetch.pdf)
 /// [^2]: [AMD Prefetch Attacks through Power and Time](https://www.usenix.org/system/files/sec22-lipp.pdf)
