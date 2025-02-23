@@ -6,8 +6,9 @@ relies on the "raw events" exposed via the Linux `perf` API.
 
 The crates in this repository rely heavily on 
 [CensoredUsername/dynasm-rs](https://github.com/CensoredUsername/dynasm-rs) 
-for generating code during runtime, and you will probably want to read [the `dynasm-rs` documentation](https://censoredusername.github.io/dynasm-rs/language/index.html) if 
-you intend on writing your own experiments. 
+for generating code during runtime, and you will probably want to read 
+[the `dynasm-rs` documentation](https://censoredusername.github.io/dynasm-rs/language/index.html) if
+you intend on writing your own experiments.
 
 ```
 config.sh        - Wrapper for invoking setup scripts
@@ -63,32 +64,33 @@ experiments.
 - [Validating/Discovering PMC Events](./perfect-zen2/src/bin/pmc.rs)
 - [Observing CVE-2023-20593 (Zenbleed)](./perfect-zen2/src/bin/zenbleed.rs)
 - [Observing Speculative Loads with Timing](./perfect-zen2/src/bin/flush-reload.rs)
-- [PREFETCH Behavior](./perfect-zen2/src/bin/prefetch.rs)
+- [Observing CVE-2021-26318/AMD-SB-1017 (PREFETCH Behavior Across Privilege Domains)](./perfect-zen2/src/bin/prefetch.rs)
+- [Observing CVE-2022-4543 (EntryBleed)](./perfect-zen2/src/bin/entrybleed.rs)
 
 
-## Environment
+## Configuration
 
-There are a bunch of scripts that you're expected to use to configure your 
-environment before running any experiments. 
+There are a bunch of scripts (see [`/.scripts/`](./scripts/)) here that you're 
+expected to use to configure your environment before running any experiments. 
 
-- Most [if not all] experiments rely on the `RDPMC` instruction, which you'll 
-  need to enable with [`./scripts/rdpmc.sh`](./scripts/rdpmc.sh)
+- Most experiments rely on the `RDPMC` instruction
+- Most experiments rely on `vm.mmap_min_addr` being set to zero
+- Most experiments are intended to be used with SMT disabled
+- The `cpufreq` governor should be configured to disable frequency scaling
 
-- Most [if not all] experiments are intended to be used with SMT disabled, see
-  [`./scripts/smt.sh`](./scripts/smt.sh)
+If you don't want to run them individually, you can just use 
+[`./config.sh`](./config.sh) (as root) to enable/disable all of them at once.
+Since your system is probably different from mine, you may want to read this
+before using it. 
 
-- Most [if not all]  experiments rely on `vm.mmap_min_addr` being set to zero,
-  see [`./scripts/low-mmap.sh`](./scripts/low-mmap.sh)
+Otherwise, see documentation in the source for more details about which 
+settings might be required/optional for a particular experiment.
 
-- [`./scripts/freq.sh`](./scripts/freq.sh) will disable `cpufreq` boost and 
-  change the governor; you probably want to change this for your setup
+### Boot-time Configuration
 
-If you don't want to run all of these individually, you can just use 
-[`./config.sh`](./config.sh) (as root) to enable/disable all of these at once. 
-
-Most [if not all] of the experiments are intended to be used while booting 
-Linux with the following kernel command-line options (where `N` is the core
-you expect to be running experiments on):
+Many experiments here are intended to be used while booting Linux with the 
+following kernel command-line options (where `N` is the core you expect to be 
+running experiments on):
 
 ```
 isolcpus=nohz,domain,managed_irq,N nohz_full=N
@@ -130,10 +132,14 @@ $ sudo ./target/release/perfect-env
 > Currently, all experiments assume the use of `isolcpus`.
 
 
-## Harness Configuration
+### Harness Configuration
 
-The "harness" is a trampoline that jumps into JIT'ed code.
-See [`./perfect/src/harness.rs`](./perfect/src/harness.rs) for more details. 
+The "harness" is a trampoline [emitted during runtime] that jumps into other 
+code emitted during runtime. In most experiments, this is used to collect 
+measurements with the `RDPMC` instruction and manage all of the state 
+associated with running experiments. 
+
+A few important details: 
 
 1. The default configuration tries allocate the low 256MiB of virtual 
    memory (from `0x0000_0000_0000_0000` to `0x0000_0000_1000_0000`). This is 
@@ -149,7 +155,6 @@ See [`./perfect/src/harness.rs`](./perfect/src/harness.rs) for more details.
    to change this to something suitable for your own setup, ie.
    ```rust
    use perfect::*;
-   
    fn main() {
        let harness = HarnessConfig::default_zen2()
            .pinned_core(3)
@@ -158,6 +163,7 @@ See [`./perfect/src/harness.rs`](./perfect/src/harness.rs) for more details.
    }
    ```
 
+See [`./perfect/src/harness.rs`](./perfect/src/harness.rs) for more details. 
 
 ## Running Experiments
 
@@ -168,9 +174,8 @@ Typical usage looks something like this:
 $ sudo ./config.sh on
 
 # Run an experiment
-$ cargo run --release -p perfect-zen2 --bin <experiment>
+$ cargo run -r -p perfect-zen2 --bin <experiment>
 ...
 
 ```
-
 
