@@ -8,10 +8,11 @@ use std::collections::*;
 
 fn main() {
     let mut harness = HarnessConfig::default_zen2().emit();
-    PrefetchLeak::run(&mut harness);
+    KernelPrefetch::run(&mut harness);
 }
 
-/// Demonstrate some behavior of the PREFETCH instruction. 
+/// Use performance counters to demonstrate some interesting behavior of the 
+/// `PREFETCH` instruction. 
 ///
 /// Context
 /// =======
@@ -21,7 +22,7 @@ fn main() {
 ///
 /// In full generality, the problem is that: 
 ///
-/// 1. An implementation of the PREFETCH instruction necessarily involves 
+/// 1. An implementation of the `PREFETCH` instruction necessarily involves 
 ///    translating a "virtual" address into a "physical" address
 ///
 /// 2. Address translation relies on the existence of a "page-table": 
@@ -38,7 +39,7 @@ fn main() {
 ///    architecturally
 ///
 /// To make matters worse: unlike most other load/store instructions in the 
-/// x86 ISA, the memory operand for the PREFETCH instruction is not subject to 
+/// x86 ISA, the memory operand for the `PREFETCH` instruction is not subject to 
 /// typical permission checks and does not cause an exception when a virtual
 /// address is invalid. 
 ///
@@ -54,12 +55,23 @@ fn main() {
 /// [^1]: [Prefetch Side-Channel Attacks: Bypassing SMAP and Kernel ASLR](https://gruss.cc/files/prefetch.pdf)
 /// [^2]: [AMD Prefetch Attacks through Power and Time](https://www.usenix.org/system/files/sec22-lipp.pdf)
 ///
+/// Other Notes
+/// ===========
+///
+/// - This test assumes that page-table isolation (PTI) is disabled. 
+///
+/// - This test uses a 2MiB stride between accesses, and the PMC event counts 
+///   L2 TLB hits for 2MiB pages. On my machine, it seems like all of the 
+///   target PTEs are for 2MiB pages.
+///
+/// For more details about how the kernel is arranged in memory, you may want
+/// to read `arch/x86/kernel/vmlinux.lds.S` [in the kernel source tree].
+///
 /// Test
 /// ====
 ///
 /// When using KASLR, the Linux kernel's program text is randomly mapped 
-/// somewhere between `0xffff_ffff_8000_0000 - `0xffff_ffff_c000_0000`. 
-/// This test uses a 1MiB stride between accesses.
+/// somewhere between `0xffff_ffff_8000_0000 - 0xffff_ffff_c000_0000`. 
 ///
 /// While measuring with PMC events for L1D TLB hits/misses:
 ///
@@ -68,8 +80,8 @@ fn main() {
 /// 3. If a mapping *does* exist, we should expect to observe an L2 TLB hit
 /// 4. The first address with a hit must be the base of the kernel .text
 ///
-pub struct PrefetchLeak;
-impl PrefetchLeak {
+pub struct KernelPrefetch;
+impl KernelPrefetch {
     /// Kernel .text (low watermark)
     const KTEXT_LO: usize = 0xffff_ffff_8000_0000;
 
@@ -81,12 +93,9 @@ impl PrefetchLeak {
         (Self::KTEXT_LO..Self::KTEXT_HI);
 
     /// Probe stride [in bytes]
-    const STRIDE: usize   = 0x0000_0000_0010_0000;
+    const STRIDE: usize   = 0x0000_0000_0020_0000;
 
     /// Set of PMC events observed when probing an address with PREFETCH
-    ///
-    /// NOTE: In my case, seems like we're sensitive to the 2MiB PTEs.
-    ///
     const EVENTS: &[Zen2Event] = &[
         //Zen2Event::LsL1DTlbMiss(LsL1DtlbMissMask::TlbReload4KL2Hit),
         //Zen2Event::LsL1DTlbMiss(LsL1DtlbMissMask::TlbReload32KL2Hit),
