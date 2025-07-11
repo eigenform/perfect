@@ -151,7 +151,7 @@ impl L1DWayPredictorMiss {
 
         // Perform the second load (from the address in RSI).
         // If the utag for this address collides with the utag for the
-        // previous address in RDI, we expect to predict.
+        // previous address in RDI, we expect the way is mispredicted.
         f.emit_rdpmc_start(0, Gpr::R15 as _);
         dynasm!(f
             ; mov rax, QWORD [rsi]
