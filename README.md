@@ -58,6 +58,7 @@ experiments.
 - [Branch Direction Prediction](./perfect-zen2/src/bin/bp.rs)
 - [Branch Target Prediction](./perfect-zen2/src/bin/btb.rs)
 - [Direction Predictor Stimulus/Response](./perfect-zen2/src/bin/bp-pattern.rs)
+- [L1D Way Prediction](./perfect-zen2/src/bin/dcache.rs)
 
 ### Miscellania
 
