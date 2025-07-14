@@ -1,14 +1,15 @@
 # perfect
 
-JIT playground for microbenchmarking, one-off experiments, and other half-baked
-ideas. Unlike [eigenform/lamina](https://github.com/eigenform/lamina), this 
-relies on the "raw events" exposed via the Linux `perf` API.
+An x86 JIT playground for writing microbenchmarks and other experiments for 
+understanding microarchitectural implementation details. 
 
 The crates in this repository rely heavily on 
 [CensoredUsername/dynasm-rs](https://github.com/CensoredUsername/dynasm-rs) 
 for generating code during runtime, and you will probably want to read 
 [the `dynasm-rs` documentation](https://censoredusername.github.io/dynasm-rs/language/index.html) if
 you intend on writing your own experiments.
+Unlike [eigenform/lamina](https://github.com/eigenform/lamina), this 
+relies on the "raw events" exposed via the Linux `perf` API in userspace. 
 
 ```
 config.sh        - Wrapper for invoking setup scripts
@@ -20,21 +21,31 @@ scripts/         - Miscellaneous scripts
 
 ## Experiments
 
-All of the experiments here are [sometimes very contrived] programs used to 
-demonstrate, observe, and document different microarchitectural implementation
-details. 
+All of the experiments here are small programs used to demonstrate, observe, 
+and document different microarchitectural implementation details. 
+This includes things like: 
 
-Apart from being executable, these are all written with the intention 
-of actually being *read* and *understood* by other folks interested in writing 
-these kinds of microbenchmarks. 
+- Measuring the sizes of hardware buffers
+- Demonstrating the behavior of certain hardware optimizations 
+- Demonstrating problems in microarchitectural security
+
+In general, all of the experiments are implemented by: 
+
+1. Emitting chunks of code with a run-time assembler
+2. Running emitted code after configuring performance-monitoring counters
+3. Printing some results to `stdout`
+
+These experiments are meant to serve as a kind of *executable documentation*
+for certain things. This will not be very useful to you unless you're planning
+on reading and understanding the code! 
 
 Note that most of the interesting experiments here are probably only relevant
-for the Zen 2 microarchitecture (and potentially later Zen iterations). 
-These are *not* intended to be portable to different platforms, since they 
-necessarily take advantage of implementation details specific to the 
-microarchitecture. 
+for the Zen 2 microarchitecture (and potentially previous/later Zen iterations,
+depending on the particular experiment). These are *not* intended to be 
+portable to different platforms since they necessarily take advantage of 
+implementation details specific to the microarchitecture. 
 
-See the [`./perfect-zen2`](./perfect-zen2) crate for the entire list of 
+See the [`./perfect-zen2`](./perfect-zen2/src/bin/) crate for the entire list of 
 experiments. 
 
 ### Optimizations
@@ -60,19 +71,23 @@ experiments.
 - [Direction Predictor Stimulus/Response](./perfect-zen2/src/bin/bp-pattern.rs)
 - [L1D Way Prediction](./perfect-zen2/src/bin/dcache.rs)
 
-### Miscellania
+### Security
 
-- [Validating/Discovering PMC Events](./perfect-zen2/src/bin/pmc.rs)
 - [Observing CVE-2023-20593 (Zenbleed)](./perfect-zen2/src/bin/zenbleed.rs)
 - [Observing Speculative Loads with Timing](./perfect-zen2/src/bin/flush-reload.rs)
 - [Observing CVE-2021-26318/AMD-SB-1017 (PREFETCH Behavior Across Privilege Domains)](./perfect-zen2/src/bin/prefetch.rs)
 - [Observing CVE-2022-4543 (EntryBleed)](./perfect-zen2/src/bin/entrybleed.rs)
 
+### Miscellania
 
-## Configuration
+- [Validating/Discovering PMC Events](./perfect-zen2/src/bin/pmc.rs)
+- [Speculatively Fuzzing x86 Instructions](./perfect-zen2/src/bin/specdec.rs)
+
+
+## Run-time Configuration
 
 There are a bunch of scripts (see [`/.scripts/`](./scripts/)) here that you're 
-expected to use to configure your environment before running any experiments. 
+expected to use to configure Linux before running any experiments. 
 
 - Most experiments rely on the `RDPMC` instruction
 - Most experiments rely on `vm.mmap_min_addr` being set to zero
@@ -87,7 +102,7 @@ before using it.
 Otherwise, see documentation in the source for more details about which 
 settings might be required/optional for a particular experiment.
 
-### Boot-time Configuration
+## Boot-time Configuration
 
 Many experiments here are intended to be used while booting Linux with the 
 following kernel command-line options (where `N` is the core you expect to be 
@@ -133,7 +148,7 @@ $ sudo ./target/release/perfect-env
 > Currently, all experiments assume the use of `isolcpus`.
 
 
-### Harness Configuration
+## Harness Configuration
 
 The "harness" is a trampoline [emitted during runtime] that jumps into other 
 code emitted during runtime. In most experiments, this is used to collect 
