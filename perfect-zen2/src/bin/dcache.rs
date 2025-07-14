@@ -101,10 +101,16 @@ fn main() {
 ///
 /// In the best case, this means that:
 ///
-/// - A single way can be read, instead of all eight in parallel
-/// - L1D arrays are banked, and reading only a single way reduces the chance
-///   of conflict with other loads that may be pending to the same bank
-/// - Data can be provided *before* the physical address is resolved
+/// - A single way can be read instead of all eight in parallel
+///   (which amounts to some dynamic power saving)
+///
+/// - L1D arrays are organized into seperate banks in order to support multiple
+///   accesses in parallel; reading only a single way reduces the chance
+///   of conflicts with other loads that may be pending to the same bank
+///
+/// - Data can be provided *before* the physical address is resolved,
+///   allowing loads to [speculatively] complete early
+///
 /// - A miss can be recognized *before* the physical address is resolved,
 ///   and the associated fill request can be sent early
 ///
@@ -129,15 +135,21 @@ fn main() {
 /// A Miss Address Buffer (MAB) allocation occurs consistently for the second
 /// load when any of these conditions is true:
 ///
-/// - vaddr[15] ^ vaddr[20] == 1
-/// - vaddr[16] ^ vaddr[21] == 1
-/// - vaddr[17] ^ vaddr[22] == 1
-/// - vaddr[18] ^ vaddr[23] == 1
+/// - `(vaddr_a[15] ^ vaddr_b[20]) == 1`
+/// - `(vaddr_a[16] ^ vaddr_b[21]) == 1`
+/// - `(vaddr_a[17] ^ vaddr_b[22]) == 1`
+/// - `(vaddr_a[18] ^ vaddr_b[23]) == 1`
 ///
 ///
 pub struct L1DWayPredictorMiss;
 impl L1DWayPredictorMiss {
 
+    /// Emit the experiment. 
+    /// Input arguments to this function during runtime are: 
+    ///
+    /// - `RDI`, virtual address A
+    /// - `RSI`, virtual address B
+    ///
     fn emit_measure() -> X64AssemblerFixed {
         let base_addr = 0x0000_1000_0000_0000;
         let mut f = X64AssemblerFixed::new(base_addr, 0x0001_0000);
@@ -177,7 +189,7 @@ impl L1DWayPredictorMiss {
         let measure_asm = Self::emit_measure();
         let measure_asm_fn = measure_asm.as_fn();
 
-        // Scan over single-bit differences between both addresses
+        // Scan over single-bit differences between addresses A and B. 
         let mut pairs = BTreeSet::new();
         for idx in 0..12 {
             pairs.insert((1<<idx, 0));
@@ -208,8 +220,8 @@ impl L1DWayPredictorMiss {
                 let min = results.get_min();
                 let max = results.get_max();
 
-                // If a miss always occurs, presumably we have created a
-                // situation where the utag cannot disambiguate the correct way
+                // If a miss always occurs for the second load, presumably we 
+                // have created a situation where the utag is *always* incorrect
                 if min != 0 {
                     println!("    {:03x}:{:02x} {:032} [a1={:016x} (set={:2},inp={:016b})] [a2={:016x} (set={:2},inp={:016b})] min={} max={}",
                         desc.id(), desc.mask(), desc.name(),
