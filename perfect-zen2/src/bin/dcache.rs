@@ -115,7 +115,7 @@ fn main() {
 ///   and the associated fill request can be sent early
 ///
 /// The hash function for Zen 2 is known from previous research[^1] by Lipp,
-/// et al. (and it would be nice to reproduce their results here).
+/// et al.
 ///
 /// [^1]: [Take A Way: Exploring the Security Implications of AMD's Cache Way Predictors](https://dl.acm.org/doi/10.1145/3320269.3384746)
 ///
@@ -127,7 +127,6 @@ fn main() {
 /// 3. If utag A and utag B are colliding (`utag B == utag A`), way A is always
 ///    predicted [incorrectly], causing a MAB allocation
 ///
-/// ...
 ///
 /// Results
 /// =======
@@ -135,11 +134,16 @@ fn main() {
 /// A Miss Address Buffer (MAB) allocation occurs consistently for the second
 /// load when any of these conditions is true:
 ///
+/// - `(vaddr_a[12] ^ vaddr_b[27]) == 1`
+/// - `(vaddr_a[13] ^ vaddr_b[26]) == 1`
+/// - `(vaddr_a[14] ^ vaddr_b[25]) == 1`
 /// - `(vaddr_a[15] ^ vaddr_b[20]) == 1`
 /// - `(vaddr_a[16] ^ vaddr_b[21]) == 1`
 /// - `(vaddr_a[17] ^ vaddr_b[22]) == 1`
 /// - `(vaddr_a[18] ^ vaddr_b[23]) == 1`
+/// - `(vaddr_a[19] ^ vaddr_b[24]) == 1`
 ///
+/// This is matches the hash function described in the "Take A Way" paper. 
 ///
 pub struct L1DWayPredictorMiss;
 impl L1DWayPredictorMiss {
@@ -190,15 +194,16 @@ impl L1DWayPredictorMiss {
         let measure_asm_fn = measure_asm.as_fn();
 
         // Scan over single-bit differences between addresses A and B. 
+        // Input to the utag hash function is 16 bits.
         let mut pairs = BTreeSet::new();
-        for idx in 0..12 {
+        for idx in 0..16 {
             pairs.insert((1<<idx, 0));
             pairs.insert((0, 1<<idx));
             pairs.insert((!(1<<idx), !0));
             pairs.insert((!0, !(1<<idx)));
         }
-        for idx1 in 0..12 {
-            for idx2 in 0..12 {
+        for idx1 in 0..16 {
+            for idx2 in 0..16 {
                 pairs.insert((1<<idx1, 1<<idx2));
                 pairs.insert((!(1<<idx1), !(1<<idx2)));
             }
@@ -223,9 +228,11 @@ impl L1DWayPredictorMiss {
                 // If a miss always occurs for the second load, presumably we 
                 // have created a situation where the utag is *always* incorrect
                 if min != 0 {
-                    println!("    {:03x}:{:02x} {:032} [a1={:016x} (set={:2},inp={:016b})] [a2={:016x} (set={:2},inp={:016b})] min={} max={}",
+                    let tag_diff = a1.utag_input() ^ a2.utag_input();
+                    println!("    {:03x}:{:02x} {:032} inp_diff={:016b} [a1={:016x} inp={:016b}] [a2={:016x} inp={:016b}] min={} max={}",
                         desc.id(), desc.mask(), desc.name(),
-                        a1.value(), a1.set(), a1.utag_input(), a2.value(), a2.set(), a2.utag_input(),
+                        tag_diff,
+                        a1.value(), a1.utag_input(), a2.value(), a2.utag_input(),
                         min, max,
                     );
                 }
