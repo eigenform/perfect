@@ -1,5 +1,6 @@
 
 pub mod branch;
+pub mod bf; 
 
 use crate::asm::*;
 

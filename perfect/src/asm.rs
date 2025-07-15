@@ -74,7 +74,10 @@ impl X64AssemblerFixed {
         let ptr  = unsafe { 
             mmap(addr, len, prot, flag, fd, off).unwrap() 
         };
-        assert!(ptr as usize == req_addr);
+
+        if ptr as usize != req_addr { 
+            panic!("mmap returned {:016x?}, expected {:016x?}", ptr, req_addr);
+        }
         ptr as *mut u8
     }
 

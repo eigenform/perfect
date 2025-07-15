@@ -14,6 +14,7 @@ pub mod experiments;
 pub mod stats; 
 pub mod util;
 pub mod events;
+pub mod uarch; 
 
 pub use rand::Rng;
 pub use rand::rngs::ThreadRng;

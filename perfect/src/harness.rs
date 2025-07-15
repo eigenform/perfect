@@ -367,6 +367,11 @@ impl HarnessConfig {
         self
     }
 
+    pub fn no_arena_alloc(mut self) -> Self { 
+        self.arena_alloc = None;
+        self
+    }
+
     pub fn arena_alloc(mut self, base: usize, len: usize) -> Self {
         self.arena_alloc = Some((base, len));
         self
@@ -872,9 +877,9 @@ impl PerfectHarness {
     {
         let mut inputs: Vec<(usize, usize)> = vec![(0, 0); iters];
         match input {
-            InputMethod::Fixed(rsi, rdi) => {
+            InputMethod::Fixed(rdi, rsi) => {
                 for val in inputs.iter_mut() {
-                    *val = (rsi, rdi);
+                    *val = (rdi, rsi);
                 }
             },
             InputMethod::Random(input_fn) => {

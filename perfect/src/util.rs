@@ -103,6 +103,22 @@ impl PerfectEnv {
         }
     }
 
+    pub fn sysfs_rdpmc_set(enabled: bool) -> Result<(), std::io::ErrorKind> { 
+        use std::io::{Write, Error};
+
+        let mut f = std::fs::File::options().write(true).open(Self::RDPMC_PATH)
+            .map_err(|e| e.kind())?;
+
+        if enabled { 
+            f.write(b"2").map_err(|e| e.kind())?;
+        } else { 
+            f.write(b"0").map_err(|e| e.kind())?;
+        }
+        Ok(())
+    }
+
+
+
     /// Returns true if SMT is enabled.
     pub fn sysfs_smt_enabled() -> bool { 
         let mut f = std::fs::File::open(Self::SMT_PATH).unwrap();
@@ -218,7 +234,7 @@ pub fn disas_chunk(buf: &ExecutableBuffer,
     res
 }
 
-pub fn disas_bytes(buf: &[u8]) -> Vec<(String, String, bool)>
+pub fn disas_bytes(buf: &[u8]) -> Vec<(String, bool, Vec<u8>)>
 {
     let mut decoder = Decoder::with_ip(64, buf, 0, DecoderOptions::NO_INVALID_CHECK);
     let mut formatter = IntelFormatter::new();
@@ -236,10 +252,12 @@ pub fn disas_bytes(buf: &[u8]) -> Vec<(String, String, bool)>
         formatter.format(&instr, &mut istr);
         let start_idx = (instr.ip() - 0) as usize;
         let instr_bytes = &buf[start_idx..start_idx + instr.len()];
-        for b in instr_bytes.iter() {
-            bstr.push_str(&format!("{:02x}", b));
-        }
-        res.push((istr, bstr, instr.is_invalid()));
+        //for b in instr_bytes.iter() {
+        //    bstr.push_str(&format!("{:02x}", b));
+        //}
+        let mut v = Vec::new();
+        v.extend_from_slice(instr_bytes);
+        res.push((istr, instr.is_invalid(), v));
     }
 
     res
