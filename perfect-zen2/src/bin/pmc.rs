@@ -31,6 +31,10 @@ pub struct Args {
     /// Run all test groups
     #[arg(short, long)]
     all_groups: bool,
+
+    /// Target CPU core (#15 by default)
+    #[arg(short, long, default_value = "15")]
+    core: Option<usize>,
 }
 
 /// Predefined sets of events
@@ -362,7 +366,9 @@ pub struct GroupResults {
 fn main() {
     let arg = Args::parse();
 
-    let mut harness = HarnessConfig::default_zen2().emit();
+    let mut harness = HarnessConfig::default_zen2()
+        .pinned_core(arg.core)
+        .emit();
 
     // Select which events will be measured
     let event_set = if let Some(events) = arg.event_set {
@@ -373,15 +379,18 @@ fn main() {
         create_default_events()
     };
 
-    // Select which groups of tests will be measured
+    // The user wants to measure all instruction groups
     if arg.all_groups { 
         let all_groups = Vec::from_iter(
             TestGroupId::ALL_GROUPS.iter().map(|x| *x)
         );
-        PmcHammer::run(&mut harness, event_set, all_groups)
-    } else { 
-        PmcHammer::run(&mut harness, event_set, arg.groups)
-    }
+        PmcHammer::run_groups(&mut harness, event_set, all_groups)
+    } 
+    // The user asked for a specific list of instruction groups
+    else  {
+        PmcHammer::run_groups(&mut harness, event_set, arg.groups)
+    } 
+
 }
 
 pub struct PmcHammer;
@@ -493,7 +502,7 @@ impl PmcHammer {
         res
     }
 
-    fn run(harness: &mut PerfectHarness, 
+    fn run_groups(harness: &mut PerfectHarness, 
         events: EventSet<Zen2Event>,
         groups: Vec<TestGroupId>,
     ) 
@@ -533,27 +542,6 @@ impl PmcHammer {
             println!();
 
         }
-
-
-
-        //for (event, results) in map.iter()
-        //    .sorted_by(|x,y| {
-        //        x.0.as_desc().id().cmp(&y.0.as_desc().id())
-        //            .then(x.0.as_desc().mask().cmp(&y.0.as_desc().mask()))
-        //    }) 
-        //{
-        //    let desc = event.as_desc();
-        //    println!("{:03x}:{:02x} {:?}", desc.id(),desc.mask(), desc.name());
-
-        //    for e in results.iter() {
-        //        ////println!("  {}", name);
-        //        println!("    min={:4} (floor={:4} obs={:4}) {}", 
-        //            e.normalized_min, e.floor_min, e.result_min, e.name
-        //        );
-        //    }
-        //}
-
-
     }
 }
 

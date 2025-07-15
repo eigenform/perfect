@@ -169,6 +169,8 @@ pub static GRP_X87: TestGroup = TestGroup {
         TestEmitter::new_anon(|mut f| { dynasm!(f; fxtract) }),
         TestEmitter::new_anon(|mut f| { dynasm!(f; fyl2x) }),
         TestEmitter::new_anon(|mut f| { dynasm!(f; fyl2xp1) }),
+        TestEmitter::new_anon(|mut f| { dynasm!(f; fcos) }),
+        TestEmitter::new_anon(|mut f| { dynasm!(f; fpatan) }),
     ],
 };
 

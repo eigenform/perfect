@@ -5,50 +5,10 @@ use clap::ValueEnum;
 pub mod int_instr;
 pub mod fp_instr;
 
-pub use crate::experiments::pmcdisc::group::int_instr::*;
-pub use crate::experiments::pmcdisc::group::fp_instr::*;
+pub use int_instr::*;
+pub use fp_instr::*;
 
-
-pub struct TestEmitter { 
-    /// Decription of this emitter
-    pub desc: Option<&'static str>,
-    /// Function implementing the emitter
-    pub func: fn(&mut X64Assembler),
-
-    pub single: bool,
-}
-impl TestEmitter { 
-    pub const fn new(desc: &'static str, func: fn(&mut X64Assembler)) -> Self { 
-        Self { desc: Some(desc), func, single: false }
-    }
-    pub const fn new_anon(func: fn(&mut X64Assembler)) -> Self { 
-        Self { desc: None, func, single: true }
-    }
-}
-
-
-
-/// A group of emitters.
-pub struct TestGroup { 
-    pub name: &'static str,
-
-    /// A prologue common to all emitters in this group, executed before 
-    /// the start of the measurement. 
-    pub prologue: Option<fn(&mut X64Assembler)>,
-
-    /// An epilogue common to all emitters in this group, executed after 
-    /// the end of the measurement. 
-    pub epilogue: Option<fn(&mut X64Assembler)>,
-
-    /// A common block of code emitted *after* the start of the measurement,
-    /// for all emitters in this group. 
-    pub common_measured: Option<fn(&mut X64Assembler)>,
-
-    pub floor: Option<fn(&mut X64Assembler)>,
-
-    //pub emitters: &'static [fn(&mut X64Assembler)],
-    pub emitters: &'static [TestEmitter],
-}
+use crate::experiments::pmcdisc::{TestEmitter, TestGroup};
 
 /// Identifier for a statically-defined [TestGroup]. 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -131,13 +91,16 @@ pub enum TestGroupId {
     /// SSE instructions
     Sse,
 
+    /// 87 floating point instructions
+    X87,
+
     /// Unsorted instructions
     Unsorted,
     
 }
 impl TestGroupId {
 
-    pub const ALL_GROUPS: &'static [Self; 34] = &[
+    pub const ALL_GROUPS: &'static [Self; 35] = &[
         Self::NopEncodings,
         Self::Rr64Integer,
         Self::Ri64Integer,
@@ -172,6 +135,7 @@ impl TestGroupId {
         Self::Avx,
         Self::Avx2,
         Self::Sse,
+        Self::X87,
 
         Self::Unsorted,
     ];
@@ -218,6 +182,8 @@ impl TestGroupId {
             Self::Avx          => &GRP_AVX_OPS,
             Self::Avx2         => &GRP_AVX2_OPS,
             Self::Sse          => &GRP_SSE_OPS,
+
+            Self::X87          => &GRP_X87,
 
             Self::Unsorted     => &GRP_UNSORTED,
             _ => unimplemented!("{:?}", self),
@@ -391,7 +357,6 @@ pub static GRP_UNSORTED: TestGroup = TestGroup {
     ],
 };
 
-
 pub static GRP_HAZ_RAW_INTEGER: TestGroup = TestGroup {
     name: "RAW hazards",
     floor: None,
@@ -408,7 +373,6 @@ pub static GRP_HAZ_RAW_INTEGER: TestGroup = TestGroup {
         TestEmitter::new("inc chain (8)", |mut f| {
             for _ in 0..8 { dynasm!(f ; inc r9) }
         }),
-
         TestEmitter::new("dependent add (reg)", 
             |mut f| dynasm!(f ; add rax, r8)
         ),
@@ -418,8 +382,6 @@ pub static GRP_HAZ_RAW_INTEGER: TestGroup = TestGroup {
         TestEmitter::new("dependent add (slow mem)", 
             |mut f| dynasm!(f ; add rax, [0x0000_1300])
         ),
-
-
         TestEmitter::new("immediate add", 
             |mut f| dynasm!(f ; add rax, 1)
         ),
