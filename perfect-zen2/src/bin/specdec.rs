@@ -16,7 +16,8 @@ use iced_x86::{
 
 fn main() {
     let mut harness = HarnessConfig::default_zen2().emit();
-    SpeculativeDecodeFuzz::run(&mut harness);
+    //SpeculativeDecodeFuzz::run(&mut harness);
+    SpeculativeDecodeExhaustive::<3>::run(&mut harness);
 }
 
 /// Try to speculatively evaluate random x86_64 instruction encodings.
@@ -74,7 +75,7 @@ impl SpeculativeDecodeFuzz {
         let mut rng = thread_rng();
 
         // Generate some random-ish x86 instruction encodings
-        for _ in 0..1024 { 
+        for _ in 0..4096 { 
             let enc: RandomEncoding<16> = rng.gen();
             cases.push(enc.as_bytes());
         }
@@ -114,20 +115,149 @@ impl SpeculativeDecodeFuzz {
                 //buf[..16].copy_from_slice(case);
 
                 let dis = disas_bytes(&buf);
-                let maybe_invalid = dis.iter().filter(|x| x.2).count() != 0;
-
+                let maybe_invalid = dis.iter().filter(|x| x.1).count() != 0;
                 if !maybe_invalid { 
                     continue;
                 }
 
+                if dis.len() != 2 {
+                    continue;
+                }
+
                 println!("input={:02x?}", buf);
-                for (istr, bstr, invalid) in dis.iter() {
+                for (istr, invalid, bytes) in dis.iter() {
+                    let mut bstr = String::new();
+                    for b in bytes.iter() {
+                        bstr.push_str(&format!("{:02x}", b));
+                    }
                     println!("  {:32} {} ", bstr, istr);
+
+                    if *invalid {
+                        decompose_encoding(&bytes);
+                    }
+
                 }
                 println!();
             }
         } 
     }
 }
+
+
+pub struct SpeculativeDecodeExhaustive<const S: usize>;
+impl <const S: usize> MispredictedReturnTemplate<[u8; S]> for SpeculativeDecodeExhaustive<S> {}
+impl <const S: usize> SpeculativeDecodeExhaustive<S> {
+
+    fn emit_instr(f: &mut X64Assembler, input: [u8; S]) {
+        dynasm!(f ; .bytes input );
+    }
+
+    fn run(harness: &mut PerfectHarness) {
+        let mut events = EventSet::new();
+        events.add(Zen2Event::LsPrefInstrDisp(0x1));
+
+        let opts = MispredictedReturnOptions::zen2_defaults()
+            .speculative_epilogue_fn(Some(|f, input| { 
+                dynasm!(f 
+                    ; nop
+                    ; nop
+                    ; nop
+                    ; nop
+                    ; prefetch [rax]
+                );
+                for _ in 0..128 { 
+                    dynasm!(f; int3);
+                }
+            }))
+            .post_prologue_fn(Some(|f, input| {
+                dynasm!(f ; mov rcx, 2);
+            }))
+            .prologue_fn(Some(|f, input| { 
+                dynasm!(f
+                );
+            }))
+            .rdpmc_strat(RdpmcStrategy::Gpr(Gpr::R15));
+
+
+        let mut cases = Vec::new();
+        for x in (0x00u8..=0xffu8).permutations(S) { 
+            let arr: [u8; S] = x.try_into().unwrap();
+            cases.push(arr);
+        }
+
+        for case in cases.iter() {  
+            let asm = Self::emit(opts, *case, Self::emit_instr);
+            let asm_reader = asm.reader();
+            let asm_tgt_buf = asm_reader.lock();
+            let asm_tgt_ptr = asm_tgt_buf.ptr(AssemblyOffset(0));
+            let asm_fn: MeasuredFn = unsafe { 
+                std::mem::transmute(asm_tgt_ptr)
+            };
+
+            for event in events.iter() {
+                let desc = event.as_desc();
+                let results = harness.measure(asm_fn, 
+                    desc.id(), desc.mask(), 8, InputMethod::Fixed(0, 0)
+                ).unwrap();
+
+                // Ignore cases which are completely garbage
+                if results.get_min() == 0 {
+                    continue;
+                }
+
+                // Create a buffer with NOP padding at the end (reflecting
+                // the actual bytes we speculatively decoded).
+                let mut buf = [0x90u8; 20];
+                let mut buf = Vec::new();
+                buf.extend_from_slice(case);
+                buf.extend_from_slice(&[0x90; 4]);
+                //buf[..16].copy_from_slice(case);
+
+                let dis = disas_bytes(&buf);
+                let maybe_invalid = dis.iter().filter(|x| x.1).count() != 0;
+                if !maybe_invalid { 
+                    continue;
+                }
+
+                println!("input={:02x?}", buf);
+                for (istr, invalid, bytes) in dis.iter() {
+                    let mut bstr = String::new();
+                    for b in bytes.iter() {
+                        bstr.push_str(&format!("{:02x}", b));
+                    }
+                    //println!("  {:32} {} ", bstr, istr);
+
+                    if *invalid {
+                        //decompose_encoding(&bytes);
+                    }
+
+
+                }
+                //println!();
+            }
+        } 
+    }
+}
+
+fn decompose_encoding(bytes: &[u8]) {
+    for start in (0..bytes.len()).rev() {
+        let rem = bytes.len() - start; 
+        
+        for len in (0..=rem).rev() { 
+            let slice = &bytes[start..start+len];
+
+            let dis = disas_bytes(slice);
+            if dis.len() == 0 { continue; }
+            let maybe_invalid = dis.iter().filter(|x| x.1).count() != 0;
+            if !maybe_invalid {
+                println!("    {:02x?}", dis);
+            }
+
+        }
+
+    }
+
+}
+
 
 
