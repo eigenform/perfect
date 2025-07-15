@@ -89,6 +89,7 @@ impl LsDataPipeMask {
 }
 
 
+// This is called "DC Miss by Type" in the 17h/71h PPR
 #[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash)]
 pub enum LsMabAllocMask {
     Loads,
@@ -384,6 +385,29 @@ impl StkEngFxOpMask {
     }
 }
 
+#[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash)]
+pub enum LsRefillsFromSysMask {
+    LocalL2,
+    LocalCache,
+    LocalDram,
+    RemoteCache,
+    RemoteDram,
+    Unk(u8),
+}
+impl LsRefillsFromSysMask {
+    pub fn desc(&self) -> MaskDesc { 
+        match self { 
+            Self::LocalL2 => MaskDesc::new(0x01, "LocalL2"),
+            Self::LocalCache => MaskDesc::new(0x02, "LocalCache"),
+            Self::LocalDram => MaskDesc::new(0x08, "LocalDram"),
+            Self::RemoteCache => MaskDesc::new(0x10, "RemoteCache"),
+            Self::RemoteDram => MaskDesc::new(0x40, "RemoteDram"),
+            Self::Unk(x) => MaskDesc::new(*x, "Unk"),
+        }
+    }
+}
+
+
 
 /// Zen 2 events. 
 ///
@@ -527,9 +551,10 @@ pub enum Zen2Event {
     // 0x41
     LsMabAlloc(LsMabAllocMask),
 
-    // 0x42?
+    // 0x42? - possibly related to 0x41
 
     // 0x43 - LsRefillsFromSys? 
+    LsRefillsFromSys(LsRefillsFromSysMask),
 
     // 0x44
 
@@ -569,7 +594,7 @@ pub enum Zen2Event {
 
     // 0x53
 
-    // 0x54
+    // 0x54 - l1 dcache miss related? no mask? similar to 0x60? 
 
     // 0x55
 
@@ -648,7 +673,7 @@ pub enum Zen2Event {
 
     // 0x78:01 - LsTlbFlush.all?
 
-    // 0x79 - valid? (L2 prefetch accuracy?)
+    // 0x79 - valid? (L2 prefetch accuracy?) (mask 0x8 seems to just count LsNotHaltedCyc?)
 
     // 0x7a - valid?
 
@@ -1172,6 +1197,13 @@ impl AsEventDesc for Zen2Event {
                 let mask = m.desc();
                 EventDesc::new(0x041, "LsMabAlloc", mask)
             },
+
+            Self::LsRefillsFromSys(m) => {
+                let mask = m.desc();
+                EventDesc::new(0x043, "LsRefillsFromSys", mask)
+            },
+
+
             Self::LsL1DTlbMiss(m) => {
                 let mask = m.desc();
                 EventDesc::new(0x045, "LsL1DTlbMiss", mask)
