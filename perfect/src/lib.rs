@@ -39,10 +39,12 @@ pub use crate::harness::*;
 pub use crate::util::*;
 pub use crate::experiments::{ 
     Experiment,
+    ExperimentArgs,
     EmitterDesc,
     DynamicEmitterCases,
     StaticEmitterCases,
 };
+pub use clap::Parser;
 pub use crate::experiments::template::*;
 
 

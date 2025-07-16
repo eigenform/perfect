@@ -19,6 +19,7 @@ use crate::util;
 use crate::stats::{RawResults, ResultList};
 use crate::asm::{ X64Assembler, X64AssemblerFixed, Emitter, Gpr, VectorGpr, };
 use crate::asm::{ NOP6, NOP8 };
+use crate::experiments::ExperimentArgs;
 
 /// Type of a function eligible for measurement via [`PerfectHarness`].
 pub type MeasuredFn = extern "C" fn(usize, usize) -> usize;
@@ -226,9 +227,10 @@ impl MeasureResults {
 }
 
 /// The target platform for generated code. 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
 pub enum TargetPlatform {
     Zen2,
+    Zen3,
     Tremont,
 }
 
@@ -302,6 +304,18 @@ impl HarnessConfig {
     /// Default allocation size for the harness (64MiB)
     const DEFAULT_SIZE: usize = 0x0000_0000_0400_0000;
 
+    pub fn from_cmdline_args(args: &ExperimentArgs) -> Option<Self> { 
+        if let Some(p) = args.platform {
+            match p { 
+                TargetPlatform::Zen2 => Some(Self::default_zen2()),
+                TargetPlatform::Zen3 => Some(Self::default_zen3()),
+                _ => unimplemented!("{:?}", p),
+            }
+        } else {
+            None
+        }
+    }
+
     pub fn default_zen2() -> Self { 
         Self {
             pinned_core: Some(15),
@@ -318,6 +332,24 @@ impl HarnessConfig {
             zero_strat_fp: ZeroStrategyFp::None,
         }
     }
+
+    pub fn default_zen3() -> Self { 
+        Self {
+            pinned_core: Some(5),
+            harness_addr: Self::DEFAULT_ADDR,
+            harness_size: Self::DEFAULT_SIZE,
+            arena_alloc: Some((0x0000_0000, 0x1000_0000)),
+            dump_gpr: false,
+            dump_vgpr: false,
+            auto_rdpmc: None,
+            cmp_rdi: None,
+            flush_btb: None,
+            platform: TargetPlatform::Zen3,
+            zero_strat: ZeroStrategy::MovFromZero,
+            zero_strat_fp: ZeroStrategyFp::None,
+        }
+    }
+
 
     pub fn default_tremont() -> Self { 
         Self {
@@ -936,7 +968,8 @@ impl PerfectHarness {
         // NOTE: The event select MSRs are different between Intel and AMD,
         // so the bits passed through a raw 'perf' event will be different. 
         let mut ctr = match self.cfg.platform { 
-            TargetPlatform::Zen2 => {
+            TargetPlatform::Zen2 | 
+            TargetPlatform::Zen3 => {
                 let cfg = Self::make_cfg_amd(event, mask);
                 Builder::new()
                 .kind(Event::Raw(cfg))
@@ -985,95 +1018,5 @@ impl PerfectHarness {
             inputs: Some(inputs),
         })
     }
-
 }
-
-// NOTE: It would be really nice to have some way of catching faults from 
-// measured code ..
-
-//static mut FAULT_INFO: *mut nix::libc::siginfo_t = std::ptr::null_mut();
-//static mut RECOVERY_POINT: *mut nix::libc::ucontext_t = std::ptr::null_mut();
-//static mut LAST_ERROR_SIGNAL: i32 = 0;
-//extern "C" fn recover_from_hardware_error(
-//    signal: i32,
-//    info: *mut nix::libc::siginfo_t,
-//    voidctx: *mut std::ffi::c_void,
-//) {
-//    unsafe { 
-//        LAST_ERROR_SIGNAL = signal;
-//        FAULT_INFO = info;
-//        nix::libc::setcontext(RECOVERY_POINT);
-//        unreachable!("uhhhh");
-//    }
-//}
-//
-//impl PerfectHarness {
-//    pub fn register_signal_handler(&mut self) {
-//        use nix::sys::signal;
-//        use nix::sys::signal::Signal;
-//        use nix::libc::{setcontext, getcontext};
-//
-//        // unblock signal
-//        let mut sigset = signal::SigSet::empty();
-//        sigset.add(signal::SIGILL);
-//        signal::sigprocmask(signal::SigmaskHow::SIG_UNBLOCK, Some(&sigset), None)
-//            .unwrap();
-//
-//        // install handler
-//        unsafe { 
-//            signal::sigaction(
-//                signal::SIGILL, 
-//                &signal::SigAction::new(
-//                    signal::SigHandler::SigAction(recover_from_hardware_error),
-//                    (signal::SaFlags::SA_NODEFER | signal::SaFlags::SA_SIGINFO),
-//                    signal::SigSet::empty(),
-//                )
-//            ).unwrap();
-//            LAST_ERROR_SIGNAL = 0;
-//        }
-//
-//        // Set our recovery point
-//        unsafe { 
-//            RECOVERY_POINT = Box::leak(
-//                Box::<nix::libc::ucontext_t>::new(std::mem::zeroed())
-//            );
-//            FAULT_INFO = Box::leak(
-//                Box::<nix::libc::siginfo_t>::new(std::mem::zeroed())
-//            );
-//
-//            nix::libc::getcontext(RECOVERY_POINT);
-//        }
-//        unsafe { 
-//            if LAST_ERROR_SIGNAL != 0 {
-//                println!("{:x?}", (*FAULT_INFO));
-//                println!("{:x?}", (*FAULT_INFO).si_addr());
-//                return;
-//            }
-//        }
-//
-//        // Do something dangerous
-//        unsafe { 
-//            core::arch::asm!("mov rax, #0xdead");
-//            core::arch::asm!("mov rbx, #0xdead");
-//            core::arch::asm!("mov rcx, #0xdead");
-//            core::arch::asm!("mov rdx, #0xdead");
-//            core::arch::asm!("mov rdi, #0xdead");
-//            core::arch::asm!("mov rsi, #0xdead");
-//            core::arch::asm!("ud2");
-//        }
-//
-//
-//        // restore default handler
-//        unsafe {
-//            signal::sigaction(
-//                signal::SIGILL, 
-//                &signal::SigAction::new(
-//                    signal::SigHandler::SigDfl,
-//                    signal::SaFlags::empty(),
-//                    signal::SigSet::empty(),
-//                )
-//            ).unwrap();
-//        }
-//    }
-//}
 

@@ -991,6 +991,10 @@ pub enum Zen2Event {
     //  Doesn't count for:
     //      - register-to-register moves from a zeroed register?
     //      - direct unconditional branches
+    //
+    // NOTE: On Zen3, it seems like the masks work. 
+    // Mask 0x02 is probably related to loads/stores. 
+    // Seemingly increments on STLI (STLF failure)
 
     // 0xd6 (doesn't seem to count anything...? ex_no_retire in 19h?)
 

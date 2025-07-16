@@ -8,6 +8,16 @@ use crate::asm::*;
 use crate::harness::*;
 use dynasmrt::*;
 
+use clap::Parser;
+
+/// Generic command-line arguments for an experiment. 
+#[derive(Parser)]
+pub struct ExperimentArgs {
+    #[arg(short, long)]
+    pub platform: Option<TargetPlatform>,
+}
+
+
 pub trait Experiment<I> {
     fn emit(input: I) -> X64Assembler;
     fn run(harness: &mut PerfectHarness);

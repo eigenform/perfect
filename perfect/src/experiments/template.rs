@@ -205,7 +205,8 @@ pub trait MispredictedReturnTemplate<I: Copy> {
 
         // Flush the BTB
         match opts.platform {
-            TargetPlatform::Zen2 => {
+            TargetPlatform::Zen2 | 
+            TargetPlatform::Zen3 => {
                 f.emit_flush_btb(0x4000);
             },
             TargetPlatform::Tremont => {
@@ -215,7 +216,8 @@ pub trait MispredictedReturnTemplate<I: Copy> {
 
         // Write the indirect branch target *through* to memory somewhere.
         match opts.platform {
-            TargetPlatform::Zen2 => {
+            TargetPlatform::Zen2 |
+            TargetPlatform::Zen3 => {
                 dynasm!(f
                     ; lea r15, [=>lab]
                     ; movnti [Self::ARENA_INDIR_TGT], r15
@@ -344,7 +346,8 @@ pub trait MispredictedReturnTemplate<I: Copy> {
         // Mispredict and defer resolution of the actual return address. 
         match opts.platform {
             // MOVNTI has more than enough latency on Zen2.
-            TargetPlatform::Zen2 => {
+            TargetPlatform::Zen2 |
+            TargetPlatform::Zen3 => {
                dynasm!(f
                     ; .align 64
                     ; ->func:

@@ -136,7 +136,13 @@ impl PerfectEnv {
         let this_pid = nix::unistd::Pid::from_raw(0);
         let mut cpuset = nix::sched::CpuSet::new();
         cpuset.set(core).unwrap();
-        nix::sched::sched_setaffinity(this_pid, &cpuset).unwrap();
+        match nix::sched::sched_setaffinity(this_pid, &cpuset) {
+            Ok(_) => {},
+            Err(errno) => {
+                println!("[!] Couldn't pin to CPU core {} (???)", core);
+                panic!("setaffinity returned {:?} - {}", errno, errno.desc());
+            },
+        }
     }
 
     /// Migrate the current PID to a dedicated cpuset. 
@@ -390,7 +396,8 @@ pub fn flush_btb<const CNT: usize>() {
 // NOTE: Quick hack for building this outside of [PerfectHarness]
 pub fn build_pmc_counter(p: TargetPlatform, desc: &EventDesc) -> Counter { 
         let mut ctr = match p {
-            TargetPlatform::Zen2 => {
+            TargetPlatform::Zen2 |
+            TargetPlatform::Zen3 => {
                 let cfg = PerfectHarness::make_cfg_amd(desc.id(), desc.mask());
                 Builder::new()
                 .kind(Event::Raw(cfg))
