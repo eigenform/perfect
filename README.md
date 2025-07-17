@@ -91,6 +91,11 @@ of experiments.
 > scripts will be removed, and users will be expected to use the `perfect-env`
 > binary. 
 
+> **NOTE**: My machine sets the `kernel.perf_event_paranoid` `sysctl` knob 
+> to `-1` at boot-time. It's not clear yet whether this is actually necessary
+> to support our use of the `perf` API, and there is currently no command in 
+> `perfect-env` for changing this during runtime. 
+
 Users are expected to use the `perfect-env` binary in order to configure 
 certain features on the target machine during runtime before experiments. 
 Toggling these features requires root permissions on the target machine. 

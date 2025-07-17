@@ -76,9 +76,11 @@ pub enum Command {
     /// Toggle 'cpufreq' frequency boosting (requires root).
     Boost { state: FeatureState },
 
+    /// Set the value of the 'vm.mmap_min_addr' sysctl knob (requires root).
+    MmapMinAddr { addr: usize },
+
     /// Show the current state of the environment. 
     Show,
-
 }
 
 #[derive(Parser)]
@@ -179,7 +181,11 @@ fn main() -> Result<(), String> {
                 .map_err(|e: std::io::ErrorKind| format!("{:?}", e))?;
             println!("[!] cpufreq boost set to {:?}", state);
         },
-
+        Command::MmapMinAddr { addr } => {
+            PerfectEnv::procfs_mmap_min_addr_set(addr)
+                .map_err(|e: std::io::ErrorKind| format!("{:?}", e))?;
+            println!("[!] vm.mmap_min_addr set to {}", addr);
+        },
 
         Command::Show => { 
             print_env();
