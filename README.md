@@ -45,8 +45,8 @@ depending on the particular experiment). These are *not* intended to be
 portable to different platforms since they necessarily take advantage of 
 implementation details specific to the microarchitecture. 
 
-See the [`./perfect-zen2`](./perfect-zen2/src/bin/) crate for the entire list of 
-experiments. 
+See the [`./perfect-zen2`](./perfect-zen2/src/bin/) crate for the entire list
+of experiments. 
 
 ### Optimizations
 
@@ -84,68 +84,61 @@ experiments.
 - [Speculatively Fuzzing x86 Instructions](./perfect-zen2/src/bin/specdec.rs)
 
 
-## Run-time Configuration
+## Environment Configuration
 
-There are a bunch of scripts (see [`/.scripts/`](./scripts/)) here that you're 
-expected to use to configure Linux before running any experiments. 
+> **NOTE**: Users can also use [`./config.sh`](./config.sh) and the provided 
+> [scripts](./scripts/) to toggle certain features. In the near future, these
+> scripts will be removed, and users will be expected to use the `perfect-env`
+> binary. 
 
-- Most experiments rely on the `RDPMC` instruction
-- Most experiments rely on `vm.mmap_min_addr` being set to zero
-- Most experiments are intended to be used with SMT disabled
-- The `cpufreq` governor should be configured to disable frequency scaling
+Users are expected to use the `perfect-env` binary in order to configure 
+certain features on the target machine during runtime before experiments. 
+Toggling these features requires root permissions on the target machine. 
+See the `--help` flag for more details. 
 
-If you don't want to run them individually, you can just use 
-[`./config.sh`](./config.sh) (as root) to enable/disable all of them at once.
-Since your system is probably different from mine, you may want to read this
-before using it. 
+```
+# Build the `perfect-env` binary
+$ cargo build --release --bin perfect-env
+...
 
-Otherwise, see documentation in the source for more details about which 
-settings might be required/optional for a particular experiment.
+$ sudo ./target/release/perfect-env --help
+...
+```
 
-## Boot-time Configuration
+In general, most experiments expect the following runtime configuration:
 
-Many experiments here are intended to be used while booting Linux with the 
-following kernel command-line options (where `N` is the core you expect to be 
-running experiments on):
+- Use of the `RDPMC` instruction is allowed in userspace
+- The `vm.mmap_min_addr` `sysctl` knob is set to zero
+- Simultaneous Multi-threading (SMT) is disabled
+- The `cpufreq` governor is configured to disable frequency scaling
+
+See documentation in the source for more details about which settings might 
+be required/optional for a particular experiment.
+
+Most [if not all] experiments also assume that a particular CPU core is 
+isolated from interrupts and other tasks scheduled by the kernel. 
+This requires the following kernel command-line options (where `N` is the core 
+you expect to be running experiments on):
 
 ```
 isolcpus=nohz,domain,managed_irq,N nohz_full=N
 ```
 
-This should [mostly] prevent interrupts, and [mostly] prevent Linux from 
-scheduling tasks on the core.
-
-You can also use the `perfect-env` binary to check/validate that the settings
-on your machine are correct:
-
-```
-$ cargo build --release --bin perfect-env
-...
-
-$ sudo ./target/release/perfect-env
-[*] 'perfect' environment summary:
-  online cores                            : 32
-  isolated cores                          : disabled
-  nohz_full cores                         : disabled
-  simultaneous multithreading (SMT)       : enabled [!!]
-  cpufreq boost                           : enabled [!!]
-  userspace rdpmc                         : disabled [!!]
-  vm.mmap_min_addr                        : 65536
-```
-
 > **WARNING:**
 >
 > Under normal circumstances (*without* `isolcpus`), the Linux watchdog timer
-> relies on counter #0 being configured automatically by the `perf` subsystem. 
+> relies on counter #0 being configured automatically by the `perf` subsystem
+> to count CPU cycles.
 >
 > Our use of the `perf-event` crate only ever configures the first available 
-> counter. This means that uses of `RDPMC` in measured code must read from 
-> counter #1. However, while using an isolated core, the watchdog timer is not 
-> configured, and measured code *must* use `RDPMC` to read from counter #0 
-> instead.
+> counter. This means that, when `isolcpus` is *not* used, correct use of 
+> `RDPMC` in measured code must read from counter #1 instead of counter #0. 
+> Otherwise, attempted uses of `RDPMC` will read the CPU cycle counter instead
+> of the desired PMC event. 
 >
-> You're expected to keep this in mind while writing experiments. 
-> Currently, all experiments assume the use of `isolcpus`.
+> You're expected to keep this in mind while writing/running experiments. 
+> Currently, all experiments assume the use of `isolcpus`, and `RDPMC` is 
+> always used with counter #0. 
 
 
 ## Harness Configuration
@@ -166,7 +159,7 @@ A few important details:
 2. The default configuration tries to allocate 64MiB at virtual address 
    `0x0000_1337_0000_0000` for emitting the harness itself.
 
-3. The default configuration pins the current process to core #15.
+3. The default configuration (Zen 2) pins the current process to core #15.
    This reflects my own setup (on 16-core the Ryzen 3950X), and you may want 
    to change this to something suitable for your own setup, ie.
    ```rust
@@ -187,7 +180,10 @@ Typical usage looks something like this:
 
 ``` 
 # Disable SMT, enable RDPMC, disable frequency scaling, enable low mmap() 
-$ sudo ./config.sh on
+$ sudo ./target/release/perfect-env smt off
+$ sudo ./target/release/perfect-env rdpmc on
+$ sudo ./target/release/perfect-env boost off
+$ sudo ./target/release/perfect-env mmap-min-addr 0
 
 # Run an experiment
 $ cargo run -r -p perfect-zen2 --bin <experiment>
