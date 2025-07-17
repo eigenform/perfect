@@ -10,7 +10,7 @@ fn main() {
     let mut harness = HarnessConfig::default_zen2()
         .zero_strategy(ZeroStrategy::MovFromZero)
         .emit();
-    //RenameResources::run(&mut harness);
+    RenameResources::run(&mut harness);
     MoveElimination::run(&mut harness);
 }
 
@@ -140,25 +140,55 @@ impl Experiment<usize> for MoveElimination {
 /// - `xor rax, rax`
 /// - `sub rax, rax`
 ///
-/// Zeroing idioms can [at least in principle] be eliminated in the front-end 
+/// Zeroing idioms can [at least in principle?] be eliminated in the front-end 
 /// of the machine during renaming, similar to how register-to-register moves
 /// are eliminated by translating them into operations on a register map.
 ///
 /// Test
 /// ====
 ///
-/// Perform a long sequence of back-to-back zero idioms/moves, but prevent
-/// them all from retiring. If they are *not* completely eliminated from 
-/// the pipeline, we expect to measure stall cycles at dispatch for the 
-/// availability of some resource. 
+/// 1. Perform a long sequence of back-to-back zero idioms/moves, but prevent
+///    them all from retiring. 
+///
+/// 2. If they are *not* completely eliminated from the pipeline, we expect 
+///    to measure stall cycles at dispatch for the availability of some 
+///    resource. 
 ///
 /// Results
 /// =======
 ///
-/// - Zero idioms on known-nonzero registers stall
-/// - Zero idioms on known-zero registers stall
-/// - Moves from nonzero registers stall
-/// - Moves from known-zero registers *do not* stall 
+/// On Zen 2, zero idioms appear to allocate and are not completely eliminated
+/// in the front-end of the machine. After ~160 instructions, the following 
+/// cases stall for physical register allocation: 
+///
+/// - Zero idioms on known-nonzero registers
+/// - Zero idioms on known-zero registers
+///
+/// Interestingly, in the case of register-to-register moves: 
+///
+/// - Moves where the source register is known to be non-zero also stall 
+///   for the availability of physical registers
+///
+/// - Moves where the source register is known-zero *do not* stall for 
+///   physical registers
+///
+/// Notes
+/// =====
+///
+/// At first, I was suprised by the fact that zero idioms should need to 
+/// allocate, but after thinking about this for a bit, maybe this is just how
+/// the expected "dependency-breaking" property is implemented here. 
+/// Allocating and binding a new physical register in this case *should* mean
+/// that all subsequent instructions depend on a distinct [and zeroed] 
+/// physical register - that sounds like a pretty reasonable definition of
+/// "dependency-breaking".
+///
+/// On the surface, it's suprising because it seems like allocating a *new* 
+/// physical register should not be necessary [at least in principle]. 
+/// If an implementation has some physical register name dedicated to a 
+/// value of "zero", presumably an allocation should not be strictly necessary. 
+/// Subsequent instructions would simply depend on the zero register, rather 
+/// than a new physical register. 
 ///
 pub struct RenameResources;
 impl MispredictedReturnTemplate<usize> for RenameResources {}
@@ -304,7 +334,7 @@ impl RenameResources {
                 let iterator = event_results.inputs.iter()
                     .zip(avgs.iter()).zip(minmax.iter());
                 for ((input, avg), (min, max)) in iterator {
-                    println!("input={} min={} avg={} max={}", 
+                    println!("input={:3} min={:4} avg={:4} max={:4}", 
                         input, min, avg, max
                     );
                 }
