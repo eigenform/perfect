@@ -1,4 +1,6 @@
 
+pub mod msr;
+
 use std::io::Read;
 use dynasmrt::{
     ExecutableBuffer,
@@ -12,6 +14,7 @@ use perf_event::events::*;
 use perf_event::hooks::sys::bindings::perf_event_mmap_page;
 use crate::harness::{PerfectHarness, TargetPlatform};
 use crate::events::EventDesc;
+use msr::Msr;
 
 
 /// Utilities for controlling the state of the current process.
@@ -103,22 +106,6 @@ impl PerfectEnv {
         }
     }
 
-    pub fn sysfs_rdpmc_set(enabled: bool) -> Result<(), std::io::ErrorKind> { 
-        use std::io::{Write, Error};
-
-        let mut f = std::fs::File::options().write(true).open(Self::RDPMC_PATH)
-            .map_err(|e| e.kind())?;
-
-        if enabled { 
-            f.write(b"2").map_err(|e| e.kind())?;
-        } else { 
-            f.write(b"0").map_err(|e| e.kind())?;
-        }
-        Ok(())
-    }
-
-
-
     /// Returns true if SMT is enabled.
     pub fn sysfs_smt_enabled() -> bool { 
         let mut f = std::fs::File::open(Self::SMT_PATH).unwrap();
@@ -130,7 +117,139 @@ impl PerfectEnv {
             _ => unreachable!("{:02x?}", res.as_bytes()),
         }
     }
+}
 
+impl PerfectEnv {
+    /// Enable or disable userspace use of the RDPMC instruction.
+    pub fn sysfs_rdpmc_set(en: bool) -> Result<(), std::io::ErrorKind> { 
+        use std::io::{Write, Error};
+        let mut f = std::fs::File::options().write(true).open(Self::RDPMC_PATH)
+            .map_err(|e| e.kind())?;
+        if en { 
+            f.write(b"2").map_err(|e| e.kind())?;
+        } else { 
+            f.write(b"0").map_err(|e| e.kind())?;
+        }
+        Ok(())
+    }
+
+    /// Enable or disable SMT
+    pub fn sysfs_smt_set(en: bool) -> Result<(), std::io::ErrorKind> { 
+        use std::io::{Write, Error};
+        let mut f = std::fs::File::options().write(true).open(Self::SMT_PATH)
+            .map_err(|e| e.kind())?;
+        if en { 
+            f.write(b"on").map_err(|e| e.kind())?;
+        } else { 
+            f.write(b"off").map_err(|e| e.kind())?;
+        }
+        Ok(())
+    }
+
+    /// Enable or disable CPUFreq boost
+    pub fn sysfs_cpufreq_boost_set(en: bool) -> Result<(), std::io::ErrorKind> { 
+        use std::io::{Write, Error};
+        let mut f = std::fs::File::options().write(true).open(Self::BOOST_PATH)
+            .map_err(|e| e.kind())?;
+        if en { 
+            f.write(b"1").map_err(|e| e.kind())?;
+        } else { 
+            f.write(b"0").map_err(|e| e.kind())?;
+        }
+        Ok(())
+    }
+
+
+    /// Set the mmap() minimum address. 
+    pub fn procfs_mmap_min_addr_set(val: usize) 
+        -> Result<(), std::io::ErrorKind>
+    { 
+        use std::io::{Write, Error};
+        let mut f = std::fs::File::options().write(true)
+            .open(Self::MMAP_MIN_PATH)
+            .map_err(|e| e.kind())?;
+
+        let s = val.to_string();
+        f.write(s.as_bytes()).map_err(|e| e.kind())?;
+        Ok(())
+    }
+
+    /// Toggle "Predictive Store Forwarding".
+    /// Only valid on Zen 3 parts (and maybe later?)
+    ///
+    ///   - `false`: PSF disabled
+    ///   - `true`: PSF enabled
+    pub fn toggle_psf(cpu: usize, en: bool) -> Result<(), String> {
+        Msr::wrmsr_toggle(0x48, cpu, 7, !en)?;
+        Ok(())
+    }
+
+    /// Toggle "Speculative Store Bypass".
+    /// Only valid on Zen 3 parts (and maybe later?)
+    ///
+    ///   - `false`: SSB disabled
+    ///   - `true`: SSB enabled
+    pub fn toggle_ssb(cpu: usize, en: bool) -> Result<(), String> {
+        Msr::wrmsr_toggle(0x48, cpu, 2, !en)?;
+        Ok(())
+    }
+
+    /// Toggle "single-thread indirect branch predictor". 
+    /// Only valid on Zen 3 parts (and maybe later?)
+    ///
+    ///   - `false`: STIBP disabled
+    ///   - `true`: STIBP enabled
+    pub fn toggle_stibp(cpu: usize, en: bool) -> Result<(), String> {
+        Msr::wrmsr_toggle(0x48, cpu, 1, !en)?;
+        Ok(())
+    }
+
+    /// Toggle "indirect branch restricted speculation".
+    /// Only valid on Zen 3 parts (and maybe later?)
+    ///
+    ///   - `false`: IBRS disabled
+    ///   - `true`: IBRS enabled
+    pub fn toggle_ibrs(cpu: usize, en: bool) -> Result<(), String> {
+        Msr::wrmsr_toggle(0x48, cpu, 0, !en)?;
+        Ok(())
+    }
+
+    /// Toggle the opcache. 
+    /// Known valid on Zen 2 parts.
+    ///
+    ///   - `false`: opcache disabled
+    ///   - `true`: opcache enabled
+    pub fn toggle_opcache(cpu: usize, en: bool) -> Result<(), String> {
+        Msr::wrmsr_toggle(0xc001_1021, cpu, 5, !en)?;
+        Ok(())
+    }
+
+    /// Toggle floating-point/vector move elimination. 
+    /// Known valid on Zen 2 parts.
+    ///
+    ///   - `false`: disabled
+    ///   - `true`: enabled
+    pub fn toggle_fp_mov_elim(cpu: usize, en: bool) -> Result<(), String> {
+        Msr::wrmsr_toggle(0xc001_1029, cpu, 1, !en)?;
+        Ok(())
+    }
+
+    /// Toggle branch predictions for non-branch instructions.
+    /// Documented as "SuppressBPOnNonBr" in the mitigations for BTC.
+    /// Known valid on Zen 2 parts.
+    ///
+    ///   - `false`: disabled
+    ///   - `true`: enabled
+    pub fn toggle_nobr_pred(cpu: usize, en: bool) -> Result<(), String> {
+        Msr::wrmsr_toggle(0xc001_10e3, cpu, 1, !en)?;
+        Ok(())
+    }
+
+}
+
+
+
+impl PerfectEnv {
     /// Pin to a particular core.
     pub fn pin_to_core(core: usize) {
         let this_pid = nix::unistd::Pid::from_raw(0);
