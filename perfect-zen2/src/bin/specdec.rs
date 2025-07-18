@@ -98,7 +98,7 @@ impl SpeculativeDecodeFuzz {
             for event in events.iter() {
                 let desc = event.as_desc();
                 let results = harness.measure(asm_fn, 
-                    desc.id(), desc.mask(), 8, InputMethod::Fixed(0, 0)
+                    &desc, 8, InputMethod::Fixed(0, 0)
                 ).unwrap();
 
                 // Ignore cases which are completely garbage
@@ -197,7 +197,7 @@ impl <const S: usize> SpeculativeDecodeExhaustive<S> {
             for event in events.iter() {
                 let desc = event.as_desc();
                 let results = harness.measure(asm_fn, 
-                    desc.id(), desc.mask(), 8, InputMethod::Fixed(0, 0)
+                    &desc, 8, InputMethod::Fixed(0, 0)
                 ).unwrap();
 
                 // Ignore cases which are completely garbage

@@ -12,6 +12,7 @@ fn main() {
     MemfileWindow::run(&mut harness);
 }
 
+
 /// Determine which [immediate] displacement bits in a memory operand are 
 /// used for determining memory renaming eligibility. 
 ///
@@ -71,17 +72,21 @@ impl Experiment<usize> for MemfileDisplacement {
             let asm_fn: MeasuredFn = unsafe { 
                 std::mem::transmute(asm_tgt_ptr)
             };
-            println!("[*] bit={}", bit);
-            for event in events.iter() {
-                let desc = event.as_desc();
-                let results = harness.measure(asm_fn, 
-                    desc.id(), desc.mask(), 256, InputMethod::Fixed(0, 0)
-                ).unwrap();
 
-                let min = results.get_min();
-                let max = results.get_max();
+            let results = harness.measure_events(
+                asm_fn, &events, 256, InputMethod::Fixed(0, 0)
+            ).unwrap();
+
+            println!("[*] bit={}", bit);
+            for result in results { 
+                let min = result.get_min();
+                let max = result.get_max();
                 println!("    {:03x}:{:02x} {:032} min={} max={}",
-                    desc.id(), desc.mask(), desc.name(), min, max);
+                    result.event.id(), 
+                    result.event.mask(), 
+                    result.event.name(), 
+                    min, max
+                );
             }
         }
         println!();
@@ -159,17 +164,21 @@ impl Experiment<usize> for MemfileWindow {
             let asm_fn: MeasuredFn = unsafe { 
                 std::mem::transmute(asm_tgt_ptr)
             };
-            println!("[*] idx={}", idx);
-            for event in events.iter() {
-                let desc = event.as_desc();
-                let results = harness.measure(asm_fn, 
-                    desc.id(), desc.mask(), 256, InputMethod::Fixed(0, 0)
-                ).unwrap();
 
-                let min = results.get_min();
-                let max = results.get_max();
+            let results = harness.measure_events(
+                asm_fn, &events, 256, InputMethod::Fixed(0, 0)
+            ).unwrap();
+
+            println!("[*] idx={}", idx);
+            for result in results { 
+                let min = result.get_min();
+                let max = result.get_max();
                 println!("    {:03x}:{:02x} {:032} min={} max={}",
-                    desc.id(), desc.mask(), desc.name(), min, max);
+                    result.event.id(), 
+                    result.event.mask(), 
+                    result.event.name(), 
+                    min, max
+                );
             }
         }
         println!();

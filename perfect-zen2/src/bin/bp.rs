@@ -320,7 +320,7 @@ impl ClearGhist {
             flush_btb::<8192>();
 
             let results = harness.measure(trampoline_fn,
-                desc.id(), desc.mask(), Self::NUM_ITER, 
+                &desc, Self::NUM_ITER, 
                 InputMethod::List(&inputs)
             ).unwrap();
 
@@ -518,7 +518,7 @@ impl CorrelatedBranches {
                 flush_btb::<8192>();
 
                 let results = harness.measure(func,
-                    desc.id(), desc.mask(), Self::NUM_ITER, 
+                    &desc, Self::NUM_ITER, 
                     InputMethod::Random(&|rng, _| { 
                         (rng.gen::<bool>() as usize, 0) 
                     }),
@@ -557,7 +557,7 @@ impl CorrelatedBranches {
                 flush_btb::<8192>();
 
                 let results = harness.measure(func,
-                    desc.id(), desc.mask(), Self::NUM_ITER, 
+                    &desc, Self::NUM_ITER, 
                     InputMethod::Random(&|rng, _| { 
                         (rng.gen::<bool>() as usize, 0) 
                     }),
@@ -690,7 +690,7 @@ impl CorrelatedBranchesSimple {
                 .collect();
 
             let results = harness.measure(func,
-                desc.id(), desc.mask(), Self::NUM_ITER, 
+                &desc, Self::NUM_ITER, 
                 InputMethod::List(&inputs)
             ).unwrap();
 

@@ -73,11 +73,26 @@ impl StlfStoreQueuePressure {
         //assert!(num_stores < addrs.len());
         //addrs.shuffle(&mut rng);
 
+        // Put the load/store queues in some kind of known state (?)
+        for _ in 0..64 { 
+            dynasm!(f
+                ; mov rax, QWORD [0x0000_0004]
+                ; mfence
+            );
+        }
+        for _ in 0..64 { 
+            dynasm!(f
+                ; mov QWORD [0x0000_0004], rax
+                ; mfence
+            );
+        }
+
+
         dynasm!(f
             ; mov rax, 0xdead_beef
             ; sfence
             ; lfence
-            ; mfence
+            //; mfence
         );
 
         f.emit_rdpmc_start(0, Gpr::R15 as u8);
@@ -119,7 +134,7 @@ impl StlfStoreQueuePressure {
             for event in events.iter() {
                 let desc = event.as_desc();
                 let results = harness.measure(asm_fn, 
-                    desc.id(), desc.mask(), 512, InputMethod::Fixed(0, 0)
+                    &desc, 512, InputMethod::Fixed(0, 0)
                 ).unwrap();
 
                 let dist = results.get_distribution();
@@ -249,7 +264,7 @@ impl StlfEligibility {
                 std::mem::transmute(asm_tgt_ptr)
             };
             let results = harness.measure(asm_fn, 
-                desc.id(), desc.mask(), 512, 
+                &desc, 512, 
                 InputMethod::Fixed(addr, alias_addr)
             ).unwrap();
 
@@ -279,7 +294,7 @@ impl StlfEligibility {
                 std::mem::transmute(asm_tgt_ptr)
             };
             let results = harness.measure(asm_fn, 
-                desc.id(), desc.mask(), 512, InputMethod::Fixed(0, 0)
+                &desc, 512, InputMethod::Fixed(0, 0)
             ).unwrap();
 
             let dist = results.get_distribution();

@@ -59,12 +59,72 @@ impl ResultList<i64> for NormalizedResults {
     fn data(&self) -> &Vec<i64> { &self.0 }
 }
 
+/// Results returned by [PerfectHarness::measure].
+#[derive(Clone)]
+pub struct MeasureResults {
+    /// Set of observations from the performance counters
+    pub data: RawResults,
+
+    /// The PMC event associated with the result data
+    pub event: EventDesc,
+
+    /// Set of recorded [integer] GPR states across all test iterations
+    pub gpr_dumps: Option<Vec<GprState>>,
+
+    /// Set of recorded [vector] GPR states across all test iterations
+    pub vgpr_dumps: Option<Vec<VectorGprState>>,
+
+    /// Set of inputs (from RDI and RSI) across all test iterations
+    pub inputs: Option<Vec<(usize, usize)>>,
+}
+impl MeasureResults {
+    /// Return the minimum observed value
+    pub fn get_min(&self) -> usize { *self.data.0.iter().min().unwrap() }
+    /// Return the maximum observed value
+    pub fn get_max(&self) -> usize { *self.data.0.iter().max().unwrap() }
+
+    /// Return the PMC event ID associated with these results.
+    pub fn event_id(&self) -> u16 { self.event.id() }
+    /// Return the PMC event mask associated with these results.
+    pub fn event_mask(&self) -> u8 { self.event.mask() }
+
+    /// Collate observations into buckets.
+    ///
+    /// The resulting map is keyed by the observed value and records the
+    /// number of times each value was observed.
+    pub fn get_distribution(&self) -> BTreeMap<usize, usize> {
+        let mut dist = BTreeMap::new();
+        for r in self.data.0.iter() {
+            if let Some(cnt) = dist.get_mut(r) {
+                *cnt += 1;
+            } else {
+                dist.insert(*r, 1);
+            }
+        }
+        dist
+    }
+
+    pub fn count(&self, val: usize) -> usize { 
+        self.data.iter().filter(|x| **x == val).count()
+    }
+
+    pub fn find(&self, val: usize) -> Vec<usize> {
+        self.data.iter().enumerate().filter(|(idx, x)| **x == val)
+            .map(|(idx, x)| idx).collect()
+    }
+    pub fn filter(&self, mut f: impl FnMut(usize) -> bool) -> Vec<usize> {
+        self.data.iter().enumerate().filter(|(idx, x)| f(**x))
+            .map(|(idx, x)| idx).collect()
+    }
 
 
-/// Set of results associated with a particular PMC event. 
-///
-/// `I` is a type representing some variable associated with this set of 
-/// observations (for instance, a variable number of emitted instructions). 
+}
+
+
+
+/// Set of results associated with a particular PMC event, where `I` is a type 
+/// representing some variable associated with this set of observations 
+/// (for instance, a variable number of emitted instructions). 
 #[derive(Clone)]
 pub struct EventResults<I: Copy + Clone> {
     /// The event used to produce this data
@@ -179,9 +239,6 @@ impl <I: Copy + Clone> EventResults<I> {
 
         diffs
     }
-
-
-
 }
 
 /// Set of results associated with a particular case.

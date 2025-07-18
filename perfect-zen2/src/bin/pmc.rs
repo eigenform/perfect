@@ -403,9 +403,9 @@ impl PmcHammer {
     ) -> EventResults
     {
         let floor = harness.measure(floor_fn, 
-            desc.id(), desc.mask(), 1024, InputMethod::Fixed(0,0)
+            &desc, 1024, InputMethod::Fixed(0,0)
         ).unwrap();
-        let res = harness.measure(asm_fn, desc.id(), desc.mask(), 
+        let res = harness.measure(asm_fn, &desc, 
             1024, InputMethod::Fixed(0, 0)
         ).unwrap();
         let floor_min = floor.get_min();

@@ -34,10 +34,7 @@ pub enum CpuFeature {
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum FeatureState {
-    On,
-    Off,
-}
+pub enum FeatureState { On, Off, }
 impl FeatureState {
     pub fn as_bool(&self) -> bool {
         match self { 
@@ -81,6 +78,14 @@ pub enum Command {
 
     /// Show the current state of the environment. 
     Show,
+
+    /// Apply the "default" configuration (requires root). 
+    ///   - Enable RDPMC
+    ///   - Disable SMT
+    ///   - Disable Boost
+    ///   - Set vm.mmap_min_addr to zero
+    #[clap(verbatim_doc_comment)]
+    Defaults,
 }
 
 #[derive(Parser)]
@@ -106,10 +111,11 @@ fn print_env() {
         true => "enabled [!!]",
         false => "disabled",
     };
-    let gov = match PerfectEnv::sysfs_cpufreq_governor(15) {
-        Ok(s) => s,
-        Err(e) => unimplemented!("{:?}", e),
-    };
+
+    //let gov = match PerfectEnv::sysfs_cpufreq_governor(15) {
+    //    Ok(s) => s,
+    //    Err(e) => unimplemented!("{:?}", e),
+    //};
 
     let rdpmc_enabled = PerfectEnv::sysfs_rdpmc_enabled();
 
@@ -127,7 +133,7 @@ fn print_env() {
     println!("  {:<40}: {}", "nohz_full cores", nohz);
     println!("  {:<40}: {}", "simultaneous multithreading (SMT)", smt);
     println!("  {:<40}: {}", "cpufreq boost", boost);
-    println!("  {:<40}: {}", "cpufreq scaling", gov);
+    //println!("  {:<40}: {}", "cpufreq scaling", gov);
     println!("  {:<40}: {}", "userspace rdpmc", rdpmc_str);
     println!("  {:<40}: {}", "vm.mmap_min_addr", mmap_min_addr);
 }
@@ -185,6 +191,19 @@ fn main() -> Result<(), String> {
             PerfectEnv::procfs_mmap_min_addr_set(addr)
                 .map_err(|e: std::io::ErrorKind| format!("{:?}", e))?;
             println!("[!] vm.mmap_min_addr set to {}", addr);
+        },
+
+        Command::Defaults => {
+            PerfectEnv::sysfs_smt_set(false)
+                .map_err(|e: std::io::ErrorKind| format!("{:?}", e))?;
+            PerfectEnv::sysfs_rdpmc_set(true)
+                .map_err(|e: std::io::ErrorKind| format!("{:?}", e))?;
+            PerfectEnv::sysfs_cpufreq_boost_set(false)
+                .map_err(|e: std::io::ErrorKind| format!("{:?}", e))?;
+            PerfectEnv::procfs_mmap_min_addr_set(0)
+                .map_err(|e: std::io::ErrorKind| format!("{:?}", e))?;
+            println!("[!] Successfully applied default configuration");
+            print_env();
         },
 
         Command::Show => { 

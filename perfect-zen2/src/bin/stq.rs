@@ -103,7 +103,7 @@ impl StoreQueueCapacity {
                 for event in events.iter() {
                     let desc = event.as_desc();
                     let results = harness.measure(asm_fn, 
-                        desc.id(), desc.mask(), 256, InputMethod::Fixed(0, 0)
+                        &desc, 256, InputMethod::Fixed(0, 0)
                     ).unwrap();
                     case_res.record(*event, input, results.data);
                 }

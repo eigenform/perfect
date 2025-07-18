@@ -350,10 +350,10 @@ impl DispatchTest {
             for event in events.iter() {
                 let desc = event.as_desc();
                 let floor_results = harness.measure(floor_fn, 
-                    desc.id(), desc.mask(), 1024, InputMethod::Fixed(0, 0)
+                    &desc, 1024, InputMethod::Fixed(0, 0)
                 ).unwrap();
                 let results = harness.measure(asm_fn, 
-                    desc.id(), desc.mask(), 1024, InputMethod::Fixed(0, 0)
+                    &desc, 1024, InputMethod::Fixed(0, 0)
                 ).unwrap();
 
                 let fmin = floor_results.get_min();

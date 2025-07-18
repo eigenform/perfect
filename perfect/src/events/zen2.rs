@@ -732,7 +732,7 @@ pub enum Zen2Event {
     // NOTE: from 19h, I'm not convinced this is accurately labeled?
     BpL0BTBHit(u8),
 
-    // 0x8e
+    // 0x8e - Number of indirect branch predictions?
     BpDynIndPred(u8),
 
     // 0x8f

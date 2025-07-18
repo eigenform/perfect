@@ -108,14 +108,17 @@ $ cargo build --release --bin perfect-env
 
 $ sudo ./target/release/perfect-env --help
 ...
+
+# Apply the default configuration
+$ sudo ./target/release/perfect-env defaults
 ```
 
-In general, most experiments expect the following runtime configuration:
+The "default" configuration applies the following changes:
 
 - Use of the `RDPMC` instruction is allowed in userspace
 - The `vm.mmap_min_addr` `sysctl` knob is set to zero
 - Simultaneous Multi-threading (SMT) is disabled
-- The `cpufreq` governor is configured to disable frequency scaling
+- `cpufreq` frequency boosting is disabled
 
 See documentation in the source for more details about which settings might 
 be required/optional for a particular experiment.

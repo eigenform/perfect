@@ -135,7 +135,7 @@ impl KernelPrefetch {
         for event in events.iter() {
             let desc = event.as_desc();
             let results = harness.measure(floor.as_fn(), 
-                desc.id(), desc.mask(), 256, InputMethod::Fixed(0, 0)
+                &desc, 256, InputMethod::Fixed(0, 0)
             ).unwrap();
             floor_res.record(*event, 0, results.data);
         }
@@ -161,7 +161,7 @@ impl KernelPrefetch {
             for event in events.iter() {
                 let desc = event.as_desc();
                 let results = harness.measure(probe.as_fn(), 
-                    desc.id(), desc.mask(), 256, InputMethod::Fixed(addr, 0)
+                    &desc, 256, InputMethod::Fixed(addr, 0)
                 ).unwrap();
                 if results.get_max() == 0 { continue; }
                 case_res.record(*event, addr, results.data);

@@ -517,13 +517,13 @@ pub fn build_pmc_counter(p: TargetPlatform, desc: &EventDesc) -> Counter {
         let mut ctr = match p {
             TargetPlatform::Zen2 |
             TargetPlatform::Zen3 => {
-                let cfg = PerfectHarness::make_cfg_amd(desc.id(), desc.mask());
+                let cfg = PerfectHarness::make_perf_cfg_amd(desc.id(), desc.mask());
                 Builder::new()
                 .kind(Event::Raw(cfg))
                 .build().unwrap()
             },
             TargetPlatform::Tremont => {
-                let cfg = PerfectHarness::make_cfg_intel(desc.id() as u8, desc.mask());
+                let cfg = PerfectHarness::make_perf_cfg_intel(desc.id() as u8, desc.mask());
                 Builder::new()
                 .kind(Event::Raw(cfg))
                 .build().unwrap()

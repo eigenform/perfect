@@ -145,7 +145,7 @@ impl PatternStimulus {
 
         // Call our function in a loop and collect the results from RDPMC.
         let results = harness.measure(func,
-            edesc.id(), edesc.mask(), outcomes.len(),
+            &edesc, outcomes.len(),
             InputMethod::List(&inputs)
         ).unwrap();
 

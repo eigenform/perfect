@@ -325,8 +325,8 @@ impl L1DWayPredictorMiss {
         let desc = event.as_desc();
 
         for (a1, a2) in pairs.iter() {
-            let results = harness.measure(measure_asm_fn,
-                desc.id(), desc.mask(), 1024,
+            let results = harness.measure_event(measure_asm_fn,
+                event, 1024,
                 InputMethod::Fixed(a1.value(), a2.value()),
             ).unwrap();
 

@@ -1,4 +1,11 @@
 
+pub mod state;
+pub mod config;
+pub mod input;
+pub use config::*;
+pub use state::*;
+pub use input::*;
+
 use std::collections::*;
 use std::pin;
 use std::os::fd::{ AsRawFd, FromRawFd };
@@ -15,449 +22,23 @@ use dynasmrt::{
     ExecutableBuffer,
     x64::X64Relocation
 };
+
 use crate::util;
-use crate::stats::{RawResults, ResultList};
+use crate::stats::*;
 use crate::asm::{ X64Assembler, X64AssemblerFixed, Emitter, Gpr, VectorGpr, };
 use crate::asm::{ NOP6, NOP8 };
 use crate::experiments::ExperimentArgs;
+use crate::events::{ EventDesc, AsEventDesc, EventSet };
 
 /// Type of a function eligible for measurement via [`PerfectHarness`].
+/// The is the function signature used to call measured code from Rust.
 pub type MeasuredFn = extern "C" fn(usize, usize) -> usize;
 
 /// Type of the harness function associated with [`PerfectHarness`].
+/// The is the function signature used to call the harness from Rust.
 pub type HarnessFn = extern "C" fn(rdi: usize, rsi: usize, measured_fn: usize)
     -> usize;
 
-/// Auto-implemented on function types that are suitable for generating
-/// input to a measured function.
-///
-/// [PerfectHarness::measure_vary] expects a type like this for varying the
-/// inputs on each iteration of a test. Returns a tuple `(usize, usize)` with
-/// values passed to the measured function via RDI and RSI.
-///
-/// The arguments to this function are:
-///
-/// - A mutable reference to the harness' [`ThreadRng`]
-/// - The current iteration/test index for the associated input
-///
-pub trait InputGenerator:
-    Fn(&mut ThreadRng, usize) -> (usize, usize) {}
-impl <F: Fn(&mut ThreadRng, usize) -> (usize, usize)>
-    InputGenerator for F {}
-
-/// Strategy used by [PerfectHarness] to compute the set of inputs to the
-/// measured function across all test runs.
-pub enum InputMethod<'a> {
-    /// Fix the value of both arguments (RDI and RSI) across all test runs.
-    Fixed(usize, usize),
-
-    /// Provide a function/closure which computes the arguments (RDI and RSI)
-    /// by using:
-    /// - A mutable reference to the [`ThreadRng`] owned by the harness
-    /// - The index of the current test run
-    Random(&'static dyn Fn(&mut ThreadRng, usize) -> (usize, usize)),
-
-    /// Provide a precomputed list of arguments (RDI and RSI).
-    List(&'a Vec<(usize, usize)>),
-}
-
-/// Harness stack layout.
-#[repr(C, align(0x10000))]
-pub struct HarnessStack { data: [u8; 0x8000], }
-impl HarnessStack {
-    pub fn new() -> Self { Self { data: [0; 0x8000] } }
-    pub fn as_ptr(&self) -> *const u8 {
-        unsafe { self.data.as_ptr().offset(0x3000) }
-    }
-}
-
-/// Saved general-purpose register state.
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub struct GprState(pub [usize; 16]);
-impl GprState {
-    pub fn new() -> Self { Self([0; 16]) }
-    pub fn clear(&mut self) { self.0 = [0; 16]; }
-    pub fn read_gpr(&self, gpr: Gpr) -> usize { self.0[gpr as usize] }
-    pub fn rax(&self) -> usize { self.0[0] }
-    pub fn rcx(&self) -> usize { self.0[1] }
-    pub fn rdx(&self) -> usize { self.0[2] }
-    pub fn rbx(&self) -> usize { self.0[3] }
-    pub fn rsp(&self) -> usize { self.0[4] }
-    pub fn rbp(&self) -> usize { self.0[5] }
-    pub fn rsi(&self) -> usize { self.0[6] }
-    pub fn rdi(&self) -> usize { self.0[7] }
-    pub fn r8(&self)  -> usize { self.0[8] }
-    pub fn r9(&self)  -> usize { self.0[9] }
-    pub fn r10(&self) -> usize { self.0[10] }
-    pub fn r11(&self) -> usize { self.0[11] }
-    pub fn r12(&self) -> usize { self.0[12] }
-    pub fn r13(&self) -> usize { self.0[13] }
-    pub fn r14(&self) -> usize { self.0[14] }
-    pub fn r15(&self) -> usize { self.0[15] }
-}
-impl std::fmt::Debug for GprState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("GprState")
-         .field("rax", &self.0[0])
-         .field("rcx", &self.0[1])
-         .field("rdx", &self.0[2])
-         .field("rbx", &self.0[3])
-         .field("rsp", &self.0[4])
-         .field("rbp", &self.0[5])
-         .field("rsi", &self.0[6])
-         .field("rdi", &self.0[7])
-         .field("r8",  &self.0[8])
-         .field("r9",  &self.0[9])
-         .field("r10", &self.0[10])
-         .field("r11", &self.0[11])
-         .field("r12", &self.0[12])
-         .field("r13", &self.0[13])
-         .field("r14", &self.0[14])
-         .field("r15", &self.0[15])
-         .finish()
-    }
-}
-
-/// Saved vector register state.
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub struct VectorGprState(pub [[u64; 4]; 16]);
-impl VectorGprState {
-    pub fn new() -> Self { Self([[0; 4]; 16]) }
-    pub fn clear(&mut self) { self.0 = [[0; 4]; 16] }
-    pub fn read_vgpr(&self, vgpr: VectorGpr) -> [u64; 4] { self.0[vgpr as usize] }
-    pub fn ymm0(&self)  -> [u64; 4] { self.0[0] }
-    pub fn ymm1(&self)  -> [u64; 4] { self.0[1] }
-    pub fn ymm2(&self)  -> [u64; 4] { self.0[2] }
-    pub fn ymm3(&self)  -> [u64; 4] { self.0[3] }
-    pub fn ymm4(&self)  -> [u64; 4] { self.0[4] }
-    pub fn ymm5(&self)  -> [u64; 4] { self.0[5] }
-    pub fn ymm6(&self)  -> [u64; 4] { self.0[6] }
-    pub fn ymm7(&self)  -> [u64; 4] { self.0[7] }
-    pub fn ymm8(&self)  -> [u64; 4] { self.0[8] }
-    pub fn ymm9(&self)  -> [u64; 4] { self.0[9] }
-    pub fn ymm10(&self) -> [u64; 4] { self.0[10] }
-    pub fn ymm11(&self) -> [u64; 4] { self.0[11] }
-    pub fn ymm12(&self) -> [u64; 4] { self.0[12] }
-    pub fn ymm13(&self) -> [u64; 4] { self.0[13] }
-    pub fn ymm14(&self) -> [u64; 4] { self.0[14] }
-    pub fn ymm15(&self) -> [u64; 4] { self.0[15] }
-}
-impl std::fmt::Debug for VectorGprState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("GprState")
-         .field("ymm0", &self.0[0])
-         .field("ymm1", &self.0[1])
-         .field("ymm2", &self.0[2])
-         .field("ymm3", &self.0[3])
-         .field("ymm4", &self.0[4])
-         .field("ymm5", &self.0[5])
-         .field("ymm6", &self.0[6])
-         .field("ymm7", &self.0[7])
-         .field("ymm8",  &self.0[8])
-         .field("ymm9",  &self.0[9])
-         .field("ymm10", &self.0[10])
-         .field("ymm11", &self.0[11])
-         .field("ymm12", &self.0[12])
-         .field("ymm13", &self.0[13])
-         .field("ymm14", &self.0[14])
-         .field("ymm15", &self.0[15])
-         .finish()
-    }
-}
-
-/// Results returned by [PerfectHarness::measure].
-#[derive(Clone)]
-pub struct MeasureResults {
-    /// Set of observations from the performance counters
-    pub data: RawResults,
-
-    /// The PMC event associated with the result data.
-    pub event: u16,
-
-    /// The PMC user mask associated with the result data.
-    pub mask: u8,
-
-    /// Set of recorded [integer] GPR states across all test runs
-    pub gpr_dumps: Option<Vec<GprState>>,
-
-    /// Set of recorded [vector] GPR states across all test runs
-    pub vgpr_dumps: Option<Vec<VectorGprState>>,
-
-    /// Set of inputs (from RDI and RSI) across all test runs.
-    pub inputs: Option<Vec<(usize, usize)>>,
-}
-impl MeasureResults {
-    /// Return the minimum observed value
-    pub fn get_min(&self) -> usize { *self.data.0.iter().min().unwrap() }
-    /// Return the maximum observed value
-    pub fn get_max(&self) -> usize { *self.data.0.iter().max().unwrap() }
-
-    /// Collate observations into buckets.
-    ///
-    /// The resulting map is keyed by the observed value and records the
-    /// number of times each value was observed.
-    pub fn get_distribution(&self) -> BTreeMap<usize, usize> {
-        let mut dist = BTreeMap::new();
-        for r in self.data.0.iter() {
-            if let Some(cnt) = dist.get_mut(r) {
-                *cnt += 1;
-            } else {
-                dist.insert(*r, 1);
-            }
-        }
-        dist
-    }
-
-    pub fn count(&self, val: usize) -> usize { 
-        self.data.iter().filter(|x| **x == val).count()
-    }
-
-    pub fn find(&self, val: usize) -> Vec<usize> {
-        self.data.iter().enumerate().filter(|(idx, x)| **x == val)
-            .map(|(idx, x)| idx).collect()
-    }
-    pub fn filter(&self, mut f: impl FnMut(usize) -> bool) -> Vec<usize> {
-        self.data.iter().enumerate().filter(|(idx, x)| f(**x))
-            .map(|(idx, x)| idx).collect()
-    }
-
-
-}
-
-/// The target platform for generated code. 
-#[derive(Clone, Copy, Debug, clap::ValueEnum)]
-pub enum TargetPlatform {
-    Zen2,
-    Zen3,
-    Tremont,
-}
-
-/// A strategy used by [`PerfectHarness`] for zeroing out the integer 
-/// general-purpose registers before entering measured code. 
-#[derive(Clone, Copy)]
-pub enum ZeroStrategy {
-    None,
-    XorIdiom,
-    MovFromZero,
-}
-
-/// A strategy used by [`PerfectHarness`] for zeroing out the vector 
-/// general-purpose registers before entering measured code. 
-#[derive(Clone, Copy)]
-pub enum ZeroStrategyFp {
-    None,
-    Vzeroall,
-    XorIdiom,
-    MovFromZero,
-}
-
-/// Configuration passed to [PerfectHarness::emit].
-#[derive(Clone, Copy)]
-pub struct HarnessConfig {
-    /// The target platform
-    platform: TargetPlatform,
-
-    harness_addr: usize,
-    harness_size: usize,
-
-    /// Optionally dump the integer general-purpose registers before exiting
-    /// from the harness. 
-    dump_gpr: bool,
-
-    /// Optionally dump the vector general-purpose registers before exiting
-    /// from the harness. 
-    dump_vgpr: bool,
-
-    /// Optionally allow the harness to automatically execute RDPMC immediately
-    /// before/after calling into measured code. 
-    auto_rdpmc: Option<usize>,
-
-    /// Optionally compare RDI to a constant value before entering measured
-    /// code. 
-    cmp_rdi: Option<i32>,
-
-    /// Optionally pin the caller to a specific hardware thread. 
-    pinned_core: Option<usize>,
-
-    /// Optionally allocate a fixed memory region for use by measured code.
-    arena_alloc: Option<(usize, usize)>, 
-
-    /// Optionally [try to] flush the BTB. 
-    flush_btb: Option<usize>,
-
-    /// The strategy for zeroing integer general-purpose registers before 
-    /// entering measured code.
-    zero_strat: ZeroStrategy,
-
-    /// The strategy for zeroing vector general-purpose registers before 
-    /// entering measured code.
-    zero_strat_fp: ZeroStrategyFp,
-}
-
-impl HarnessConfig {
-
-    /// Default base address for the harness. 
-    const DEFAULT_ADDR: usize = 0x0000_1337_0000_0000;
-
-    /// Default allocation size for the harness (64MiB)
-    const DEFAULT_SIZE: usize = 0x0000_0000_0400_0000;
-
-    pub fn from_cmdline_args(args: &ExperimentArgs) -> Option<Self> { 
-        if let Some(p) = args.platform {
-            match p { 
-                TargetPlatform::Zen2 => Some(Self::default_zen2()),
-                TargetPlatform::Zen3 => Some(Self::default_zen3()),
-                _ => unimplemented!("{:?}", p),
-            }
-        } else {
-            None
-        }
-    }
-
-    pub fn default_zen2() -> Self { 
-        Self {
-            pinned_core: Some(15),
-            harness_addr: Self::DEFAULT_ADDR,
-            harness_size: Self::DEFAULT_SIZE,
-            arena_alloc: Some((0x0000_0000, 0x1000_0000)),
-            dump_gpr: false,
-            dump_vgpr: false,
-            auto_rdpmc: None,
-            cmp_rdi: None,
-            flush_btb: None,
-            platform: TargetPlatform::Zen2,
-            zero_strat: ZeroStrategy::MovFromZero,
-            zero_strat_fp: ZeroStrategyFp::None,
-        }
-    }
-
-    pub fn default_zen3() -> Self { 
-        Self {
-            pinned_core: Some(5),
-            harness_addr: Self::DEFAULT_ADDR,
-            harness_size: Self::DEFAULT_SIZE,
-            arena_alloc: Some((0x0000_0000, 0x1000_0000)),
-            dump_gpr: false,
-            dump_vgpr: false,
-            auto_rdpmc: None,
-            cmp_rdi: None,
-            flush_btb: None,
-            platform: TargetPlatform::Zen3,
-            zero_strat: ZeroStrategy::MovFromZero,
-            zero_strat_fp: ZeroStrategyFp::None,
-        }
-    }
-
-
-    pub fn default_tremont() -> Self { 
-        Self {
-            pinned_core: Some(15),
-            harness_addr: Self::DEFAULT_ADDR,
-            harness_size: Self::DEFAULT_SIZE,
-            arena_alloc: Some((0x0000_0000, 0x1000_0000)),
-            dump_gpr: false,
-            dump_vgpr: false,
-            auto_rdpmc: None,
-            cmp_rdi: None,
-            flush_btb: None,
-            platform: TargetPlatform::Tremont,
-            zero_strat: ZeroStrategy::MovFromZero,
-            zero_strat_fp: ZeroStrategyFp::None,
-        }
-    }
-}
-
-impl HarnessConfig {
-    pub fn harness_addr(mut self, addr: usize) -> Self { 
-        self.harness_addr = addr;
-        self
-    }
-    pub fn harness_size(mut self, size: usize) -> Self { 
-        self.harness_size = size;
-        self
-    }
-
-    pub fn dump_gpr(mut self, x: bool) -> Self {
-        self.dump_gpr = x;
-        self
-    }
-
-    pub fn dump_vgpr(mut self, x: bool) -> Self {
-        self.dump_vgpr = x;
-        self
-    }
-
-    pub fn auto_rdpmc(mut self, x: Option<usize>) -> Self {
-        self.auto_rdpmc = x;
-        self
-    }
-
-    pub fn pinned_core(mut self, x: Option<usize>) -> Self {
-        self.pinned_core = x;
-        self
-    }
-
-    pub fn no_arena_alloc(mut self) -> Self { 
-        self.arena_alloc = None;
-        self
-    }
-
-    pub fn arena_alloc(mut self, base: usize, len: usize) -> Self {
-        self.arena_alloc = Some((base, len));
-        self
-    }
-
-    pub fn cmp_rdi(mut self, x: i32) -> Self {
-        self.cmp_rdi = Some(x);
-        self
-    }
-
-    pub fn platform(mut self, x: TargetPlatform) -> Self {
-        self.platform = x;
-        self
-    }
-
-    pub fn flush_btb(mut self, x: usize) -> Self {
-        self.flush_btb = Some(x);
-        self
-    }
-
-    pub fn zero_strategy(mut self, x: ZeroStrategy) -> Self { 
-        self.zero_strat = x;
-        self
-    }
-
-    pub fn zero_strategy_fp(mut self, x: ZeroStrategyFp) -> Self { 
-        self.zero_strat_fp = x;
-        self
-    }
-
-}
-
-impl HarnessConfig {
-    /// Create a [PerfectHarness] using this configuration.
-    pub fn emit(self) -> PerfectHarness {
-        if let Some(pinned_core) = self.pinned_core {
-            util::PerfectEnv::pin_to_core(pinned_core);
-            //println!("[*] Pinned to core {}", pinned_core);
-        }
-        if let Some((base, len)) = self.arena_alloc {
-            let mmap_min_addr = util::PerfectEnv::procfs_mmap_min_addr();
-            if base < mmap_min_addr {
-                println!("[!] The harness arena is set to {:016x}, \
-                    but vm.mmap_min_addr is set to {:016x}", 
-                    base, mmap_min_addr);
-                panic!("[!] Cannot mmap for harness arena at {:016x}", base);
-            }
-            let _ = util::PerfectEnv::mmap_fixed(base, len);
-        }
-
-        let mut res = PerfectHarness::new(self);
-        res
-    }
-}
 
 /// Harness used to configure PMCs and call into measured code.
 ///
@@ -492,12 +73,6 @@ impl HarnessConfig {
 /// See [Emitter::emit_rdpmc_start] and [Emitter::emit_rdpmc_end] for more.
 ///
 pub struct PerfectHarness {
-
-    // Backing allocation with emitted code implementing the harness.
-    // Created after [PerfectHarness::emit] is called.
-    //harness_buf: Option<ExecutableBuffer>,
-    //harness_fn: Option<HarnessFn>,
-
     /// Fixed backing allocation for emitted code implementing the harness. 
     assembler: X64AssemblerFixed,
 
@@ -514,13 +89,6 @@ pub struct PerfectHarness {
     /// Harness configuration.
     cfg: HarnessConfig,
 
-    /// Enable/disable PMC configuration when running a measured function.
-    /// This is enabled by default. 
-    ///
-    /// When disabled, the harness does not configure PMCs before running
-    /// the measured function. 
-    pmc_use: bool,
-
     pub rng: ThreadRng,
 }
 
@@ -536,7 +104,6 @@ impl PerfectHarness {
         let mut res = Self {
             assembler,
             cfg,
-            pmc_use: true,
             rng: rand::thread_rng(),
             harness_state: Box::new([0; 16]),
             harness_stack: Box::new(HarnessStack::new()),
@@ -547,17 +114,9 @@ impl PerfectHarness {
         res
     }
 
-    /// Disable/enable the use of PMCs when calling [`PerfectHarness::measure`].
-    pub fn set_pmc_use(&mut self, x: bool) {
-        self.pmc_use = x;
-    }
-
     /// Print disassembly for the entire harness. 
     pub fn disas(&self) {
         self.assembler.disas(AssemblyOffset(0), None);
-        //if let Some(buf) = &self.harness_buf {
-        //    crate::util::disas(&buf, AssemblyOffset(0), None);
-        //}
     }
 
     /// Emit the actual harness function during runtime.
@@ -574,8 +133,6 @@ impl PerfectHarness {
     /// - Measured functions are expected to end with a return instruction.
     /// - Measured functions are expected to return a result in RAX.
     fn emit(&mut self) {
-        //let mut harness = X64Assembler::new().unwrap();
-
         let state_ptr = self.harness_state.as_ptr();
         let stack_ptr = self.harness_stack.as_ptr();
 
@@ -844,70 +401,55 @@ impl PerfectHarness {
         );
 
         self.assembler.commit().unwrap();
-
-        //let harness_buf = harness.finalize().unwrap();
-        //let harness_fn: HarnessFn = unsafe {
-        //    std::mem::transmute(harness_buf.ptr(AssemblyOffset(0)))
-        //};
-        //self.harness_buf = Some(harness_buf);
-        //self.harness_fn  = Some(harness_fn);
     }
 }
 
 
 impl PerfectHarness {
-
-    // NOTE: The kernel configures PMC counter 0 for counting cycles and uses
-    // it for its own purposes (IIRC for interrupt timing?). This is annoying 
-    // because most of the code here is written to read from counter 0,
-    // and if you forget to boot with isolcpus=, all measurements using it 
-    // will just return elapsed cycles. 
-    //
-    // It would be nice to detect when this is the case and automatically 
-    // handle this in cases where you aren't using isolcpus=. 
-
-    /// Resolve the actual index of the hardware counter being used by 'perf'.
-    //unsafe fn resolve_hw_pmc_idx(ctr: &Counter) -> usize {
-    //    let file = unsafe {
-    //        std::fs::File::from_raw_fd(ctr.as_raw_fd())
-    //    };
-    //    let mmap = unsafe {
-    //        memmap2::MmapOptions::new()
-    //            .len(std::mem::size_of::<perf_event_mmap_page>())
-    //            .map(&file)
-    //            .unwrap()
-    //    };
-    //    let mmap_page = unsafe {
-    //        &*(mmap.as_ptr() as *const perf_event_mmap_page)
-    //    };
-    //    let index = mmap_page.index;
-    //    index as usize
-    //}
-
     /// Generate the config bits for the raw perf_event (Intel).
-    pub fn make_cfg_intel(event: u8, mask: u8) -> u64 { 
+    pub fn make_perf_cfg_intel(event: u8, mask: u8) -> u64 { 
         let event_num = event as u64;
         let mask_num = mask as u64;
         (mask_num << 8) | event_num
     }
 
     /// Generate the config bits for the raw perf_event (AMD).
-    pub fn make_cfg_amd(event: u16, mask: u8) -> u64 {
+    pub fn make_perf_cfg_amd(event: u16, mask: u8) -> u64 {
         let event_num = event as u64 & 0b1111_1111_1111;
         let event_lo  = event_num & 0b0000_1111_1111;
         let event_hi  = (event_num & 0b1111_0000_0000) >> 8;
         let mask_num  = mask as u64;
         (event_hi << 32) | (mask_num << 8) | event_lo
     }
+
+    /// Build a [`perf_event::Counter`] for controlling a PMC. 
+    ///
+    /// NOTE: The event select MSRs are different between Intel and AMD,
+    /// so the bits passed through a raw 'perf' event will be different. 
+    fn make_perf_cfg(platform: TargetPlatform, event: &EventDesc)
+        -> Counter
+    {
+        match platform { 
+            TargetPlatform::Zen2 | 
+            TargetPlatform::Zen3 => {
+                let cfg = Self::make_perf_cfg_amd(event.id(), event.mask());
+                Builder::new().kind(Event::Raw(cfg)).build().unwrap()
+            },
+            TargetPlatform::Tremont => {
+                let cfg = Self::make_perf_cfg_intel(event.id() as u8, event.mask());
+                Builder::new().kind(Event::Raw(cfg)).build().unwrap()
+            },
+        }
+    }
 }
 
 impl PerfectHarness {
-
     /// Generate a list of inputs to measured code.
-    fn generate_inputs(&mut self, iters: usize, input: InputMethod) 
-        -> Vec<(usize, usize)> 
+    fn generate_inputs(rng: &mut ThreadRng, iters: usize, input: InputMethod) 
+        -> Vec<(usize, usize)>
     {
         let mut inputs: Vec<(usize, usize)> = vec![(0, 0); iters];
+
         match input {
             InputMethod::Fixed(rdi, rsi) => {
                 for val in inputs.iter_mut() {
@@ -916,7 +458,7 @@ impl PerfectHarness {
             },
             InputMethod::Random(input_fn) => {
                 for (idx, val) in inputs.iter_mut().enumerate() {
-                    *val = input_fn(&mut self.rng, idx);
+                    *val = input_fn(rng, idx);
                 }
             }
             InputMethod::List(data) => {
@@ -929,8 +471,11 @@ impl PerfectHarness {
         }
         inputs
     }
+}
 
-    /// Run the provided function with the harness.
+impl PerfectHarness {
+    /// Run the provided function a single time with the harness *without* 
+    /// configuring performance counters. 
     pub fn call(&mut self, rdi: usize, rsi: usize, measured_fn: MeasuredFn) 
         -> usize
     { 
@@ -939,17 +484,50 @@ impl PerfectHarness {
         return res
     }
 
-    /// Run and *measure* the provided function with the harness. 
+    /// Run and measure the provided function using a single PMC event. 
+    pub fn measure_event(&mut self, 
+        measured_fn: MeasuredFn,
+        event: impl AsEventDesc,
+        iters: usize,
+        input: InputMethod,
+    ) -> Result<MeasureResults, &str>
+    {
+        let edesc = event.as_desc();
+        self.measure(measured_fn, &edesc, iters, input)
+    }
+
+    /// Run and measure the provided function using one or more PMC events. 
+    ///
+    /// FIXME: Ideally generate inputs *once* here, not in `.measure()`. 
+    pub fn measure_events<E: AsEventDesc>(&mut self, 
+        measured_fn: MeasuredFn,
+        events: &EventSet<E>,
+        iters: usize,
+        input: InputMethod,
+    ) -> Result<Vec<MeasureResults>, &str>
+    {
+        let mut results = Vec::new();
+
+        for event in events.iter() { 
+            let edesc = event.as_desc();
+            let result = self.measure(
+                measured_fn, &edesc, iters, input.clone(),
+            ).unwrap();
+            results.push(result);
+        }
+        Ok(results)
+    }
+
+    /// Run the provided function with the harness after configuring the 
+    /// performance counters with the given event. 
     pub fn measure(&mut self,
         measured_fn: MeasuredFn,
-        event: u16,
-        mask: u8,
+        event: &EventDesc,
         iters: usize,
         input: InputMethod,
    ) -> Result<MeasureResults, &str>
     {
-        let inputs = self.generate_inputs(iters, input);
-        //let harness_fn = self.harness_fn.unwrap();
+        let inputs = Self::generate_inputs(&mut self.rng, iters, input);
         let harness_fn = self.assembler.as_harness_fn();
 
         // Allocate for output data produced while running the harness
@@ -965,33 +543,22 @@ impl PerfectHarness {
             None 
         };
 
-        // NOTE: The event select MSRs are different between Intel and AMD,
-        // so the bits passed through a raw 'perf' event will be different. 
-        let mut ctr = match self.cfg.platform { 
-            TargetPlatform::Zen2 | 
-            TargetPlatform::Zen3 => {
-                let cfg = Self::make_cfg_amd(event, mask);
-                Builder::new()
-                .kind(Event::Raw(cfg))
-                .build().unwrap()
-            },
-            TargetPlatform::Tremont => {
-                let cfg = Self::make_cfg_intel(event as u8, mask);
-                Builder::new()
-                .kind(Event::Raw(cfg))
-                .build().unwrap()
-            },
-        };
+        // Configure the appropriate counter with the requested event
+        let mut ctr = Self::make_perf_cfg(self.cfg.platform, &event);
 
-        if self.pmc_use {
-            ctr.reset().unwrap();
-            ctr.enable().unwrap();
-        }
+        ctr.reset().unwrap();
+        ctr.enable().unwrap();
 
-        // For each requested iteration:
+        // NOTE: This is a critical loop. 
+        // Ideally, measured code is totally decoupled from effects on the 
+        // machine that might be imparted by the body of this loop. 
+        // 
+        // For each requested iteration, we need to:
+        // - Load the inputs for this iteration
         // - Call the harness with the requested function and inputs
-        // - Save the result value
+        // - Save the result from this iteration
         // - Optionally save the general-purpose register state
+
         for i in 0..iters {
             let (rdi, rsi) = inputs[i];
             let res = harness_fn(rdi, rsi, measured_fn as usize);
@@ -1004,17 +571,16 @@ impl PerfectHarness {
             }
         }
 
-        if self.pmc_use {
-            ctr.disable().unwrap();
-        }
+        ctr.disable().unwrap();
 
         self.gpr_state.clear();
         self.vgpr_state.clear();
 
         Ok(MeasureResults {
             data: RawResults(results),
-            event, mask,
-            gpr_dumps, vgpr_dumps,
+            event: event.clone(),
+            gpr_dumps,
+            vgpr_dumps,
             inputs: Some(inputs),
         })
     }

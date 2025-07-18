@@ -170,7 +170,7 @@ impl Zenbleed {
         // Take some measurements
         let desc = event.as_desc();
         let results = harness.measure(asm_fn, 
-            desc.id(), desc.mask(), 16384, InputMethod::Fixed(0, 0)
+            &desc, 16384, InputMethod::Fixed(0, 0)
         ).unwrap();
 
         let min = results.get_min();
