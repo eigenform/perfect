@@ -11,7 +11,9 @@ fn main() {
         Some(cfg) => cfg.emit(),
         None => HarnessConfig::default_zen2().emit()
     };
-    SmcSimple::run(&mut harness);
+
+    //SmcSimple::run(&mut harness);
+    SmcSpeculative::run(&mut harness);
 }
 
 /// Observe the speculative window created by the latency associated with 
@@ -92,6 +94,7 @@ impl SmcSimple {
         // The store begins on the next-sequential cacheline. 
         dynasm!(f
             ; .align 64
+            ; .bytes NOP8
             ; .bytes NOP8
             ; .bytes NOP8
             ; .bytes NOP8
@@ -179,6 +182,164 @@ impl SmcSimple {
             }
             println!();
         }
+    }
+}
+
+
+/// Try to *speculatively* modify the current instruction stream.
+///
+/// Test
+/// ====
+///
+/// In the shadow of a mispredicted RET instruction, perform a 64-bit store
+/// [at the *mispredicted* return address] that writes to the instruction
+/// stream at the *architectural* return address.
+///
+/// Result
+/// ======
+///
+/// The store does *not* appear to cause a resync, and the patched instruction
+/// (FNOP) from modified bytes is never observed to be speculatively dispatched.
+/// This is the *expected* behavior. 
+///
+/// Presumably, the resync associated with the misprediction *should* always
+/// occur first. If this were *not* the case, the state of the L1I cache would
+/// be exposed to potentially unwanted side-effects. 
+///
+/// The order of events here is [probably, loosely]: 
+///
+/// 1. The return address is predicted [incorrectly, by default] to be the 
+///    next-sequential instruction (the store to the instruction stream)
+///
+/// 2. A store writes over the return address, and speculation occurs 
+///    down the incorrect path until the store is retired
+///
+/// 3. The store to the instruction stream enters the pipeline and is 
+///    speculatively dispatched
+///
+/// 4. The speculative store hits in the L1I cache - but presumably stalls 
+///    and does not immediately resynchronize the pipeline until it is 
+///    guaranteed to be part of the architectural path (ie. when all older 
+///    in-flight branches have been resolved/retired) 
+///
+/// 5. The first store retires, and the misprediction is resolved by 
+///    flushing incorrect ops from the pipeline (necessarily meaning that 
+///    our speculative store is cancelled)
+///
+/// 6. (The pipeline is resynchronized and continues at the architectural
+///    return address.)
+///
+pub struct SmcSpeculative;
+impl SmcSpeculative {
+    fn emit(padding: usize) -> X64AssemblerFixed
+    {
+        let mut rng = rand::thread_rng();
+        let mut f = X64AssemblerFixed::new(
+            0x0000_1000_0000_0000,
+            0x0000_0000_0001_0000,
+        );
+
+        let target = f.new_dynamic_label();
+        let fnop = f.new_dynamic_label();
+        let misp_fn = f.new_dynamic_label();
+        let misp_exit = f.new_dynamic_label();
+
+        dynasm!(f
+            ; lea r8, [=>misp_exit]
+            ; mfence
+        );
+
+        f.emit_rdpmc_start(0, Gpr::R15 as u8);
+
+        dynasm!(f
+            ; .align 64
+            ; .bytes NOP8
+            ; .bytes NOP8
+            ; .bytes NOP8
+            ; .bytes NOP8
+            ; .bytes NOP8
+            ; .bytes NOP8
+            ; .bytes NOP8
+            ; .bytes NOP5
+            ; lfence
+        );
+        dynasm!(f
+            ; call =>misp_fn
+        );
+
+        // 64-bit store to the instruction stream
+        // 'misp_fn' *speculatively* returns here.
+        dynasm!(f 
+            ; mov QWORD [r8], rdi
+        );
+
+        // Create a mispredicted return
+        f.pad_until(0x0000_1000_0000_0400);
+        f.place_dynamic_label(misp_fn);
+        dynasm!(f
+            ; movnti [rsp], r8
+            ; ret
+        );
+
+        // Target bytes to be [speculatively] written. 
+        // 'misp_fn' *architecturally* returns here.
+        f.pad_until(0x0000_1000_0000_0800);
+        f.place_dynamic_label(misp_exit);
+        dynasm!(f 
+            ; nop
+            ; nop
+        );
+        f.pad_until(0x0000_1000_0000_0840);
+
+        f.emit_rdpmc_end(0, Gpr::R15 as u8, Gpr::Rax as u8);
+        f.emit_ret();
+        f.commit().unwrap();
+
+        f
+    }
+
+    pub fn run(harness: &mut PerfectHarness) {
+        let mut events = EventSet::new();
+        events.add(Zen2Event::DeDisOpsFromDecoder(DeDisOpsFromDecoderMask::Fp));
+        events.add(Zen2Event::FpSseAvxOpsRetired(0xff));
+        //events.add(Zen2Event::LsNotHaltedCyc(0x00));
+        events.add(Zen2Event::LsDispatch(LsDispatchMask::StDispatch));
+        //events.add(Zen2Event::LsPrefInstrDisp(0xff));
+
+        // This probably counts pipeline-resynchronizing events.
+        events.add(Zen2Event::BpRedirect(BpRedirectMask::Unk(0x00)));
+
+        //for padding in 0..=256 {
+            for event in events.iter() {
+                let mut results = RawResults(Vec::new());
+
+                // Re-emit measured code each iteration
+                let mut asm = Self::emit(0);
+
+                for iter in 0..512 {
+                    asm.commit().unwrap();
+                    let result = harness.measure_event(asm.as_fn(), 
+                        *event, 1,
+                        InputMethod::Fixed(0x90909090_9090d8d0, 0)
+                    ).unwrap();
+                    results.0.extend_from_slice(&result.data.0);
+                }
+
+                let dist = results.histogram();
+                let min = results.get_min();
+                let max = results.get_max();
+                let desc = event.as_desc();
+                let mode = results.get_mode();
+
+                println!("  pad={:3} {:03x}:{:02x} {:32} min={} max={} {:?}",
+                    0,
+                    desc.id(), desc.mask(), desc.name(), 
+                    min, max,
+                    dist,
+                );
+            }
+            println!();
+        //}
     }
 }
 
