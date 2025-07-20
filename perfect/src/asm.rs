@@ -202,6 +202,28 @@ impl X64AssemblerFixed {
         count
     }
 
+    /// Pad with 1-byte NOP until the requested address.
+    /// Returns the number of emitted bytes. 
+    pub fn pad_1b_until(&mut self, addr: usize) -> usize { 
+        if self.cur_addr() == addr { 
+            return 0;
+        }
+        assert!(addr > self.cur_addr(),
+            "Requested pad target {:016x} must be > cursor {:016x}",
+            addr, self.cur_addr(),
+        );
+        assert!(addr <= self.max_addr(),
+            "Requested {:016x} must be <= max addr {:016x}",
+            addr, self.max_addr(),
+        );
+        let mut count = 0;
+        let num_padding = addr - self.cur_addr();
+        self.emit_nop_sled(num_padding);
+
+        assert_eq!(self.cur_addr(), addr);
+        num_padding
+    }
+
     /// Pad with NOP (up to the 8-byte encoding) until the requested address. 
     /// Returns the number of emitted bytes. 
     pub fn pad_until(&mut self, addr: usize) -> usize {

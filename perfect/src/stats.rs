@@ -27,19 +27,31 @@ pub struct NormalizedResults(pub Vec<i64>);
 
 /// Implemented on types which contain a list of observed values. 
 pub trait ResultList<D: Copy + Ord> { 
-    /// Return a reference to the list of values
+    /// Return a reference to the list of values.
     fn data(&self) -> &Vec<D>;
-    /// Return the number of observed values
+
+    /// Return the number of observed values.
     fn len(&self) -> usize { self.data().len() }
-    /// Return the minimum value in the list
+
+    /// Return the minimum value in the list.
     fn get_min(&self) -> D { *self.data().iter().min().unwrap() }
-    /// Return the maximum value in the list
+
+    /// Return the maximum value in the list.
     fn get_max(&self) -> D { *self.data().iter().max().unwrap() }
-    /// Return an iterator over values in the list
+
+    /// Return the most-frequent value in the list.
+    fn get_mode(&self) -> D { 
+        let (val, cnt) = self.histogram().into_iter().max_by(|x,y| x.1.cmp(&y.1))
+            .unwrap();
+        val
+    }
+
+    /// Return an iterator over values in the list.
     fn iter<'a>(&'a self) -> impl Iterator<Item=&'a D> where D: 'a { 
         self.data().iter() 
     }
-    /// Return a histogram which counts the distribution of values
+
+    /// Return a histogram counting the distribution of all values in the list.
     fn histogram(&self) -> BTreeMap<D, usize> {
         let mut dist = BTreeMap::new();
         for r in self.data().iter() {
@@ -51,12 +63,34 @@ pub trait ResultList<D: Copy + Ord> {
         }
         dist
     }
+
+    /// Returns the number of times that a particular value occurs in the list.
+    fn count(&self, val: D) -> usize { 
+        self.iter().filter(|x| **x == val).count()
+    }
+
+    /// Return the indexes of all occurences of a particular value in the list.
+    fn find(&self, val: D) -> Vec<usize> {
+        self.iter().enumerate().filter(|(idx, x)| **x == val)
+            .map(|(idx, x)| idx).collect()
+    }
+
+    /// Return the indexes of all values in the list for which the given 
+    /// function `f` returns `true`. 
+    fn filter(&self, mut f: impl FnMut(D) -> bool) -> Vec<usize> {
+        self.iter().enumerate().filter(|(idx, x)| f(**x))
+            .map(|(idx, x)| idx).collect()
+    }
 }
+
 impl ResultList<usize> for RawResults {
     fn data(&self) -> &Vec<usize> { &self.0 }
 }
 impl ResultList<i64> for NormalizedResults {
     fn data(&self) -> &Vec<i64> { &self.0 }
+}
+impl ResultList<usize> for MeasureResults {
+    fn data(&self) -> &Vec<usize> { &self.data.0 }
 }
 
 /// Results returned by [PerfectHarness::measure].
@@ -78,48 +112,11 @@ pub struct MeasureResults {
     pub inputs: Option<Vec<(usize, usize)>>,
 }
 impl MeasureResults {
-    /// Return the minimum observed value
-    pub fn get_min(&self) -> usize { *self.data.0.iter().min().unwrap() }
-    /// Return the maximum observed value
-    pub fn get_max(&self) -> usize { *self.data.0.iter().max().unwrap() }
-
     /// Return the PMC event ID associated with these results.
     pub fn event_id(&self) -> u16 { self.event.id() }
     /// Return the PMC event mask associated with these results.
     pub fn event_mask(&self) -> u8 { self.event.mask() }
-
-    /// Collate observations into buckets.
-    ///
-    /// The resulting map is keyed by the observed value and records the
-    /// number of times each value was observed.
-    pub fn get_distribution(&self) -> BTreeMap<usize, usize> {
-        let mut dist = BTreeMap::new();
-        for r in self.data.0.iter() {
-            if let Some(cnt) = dist.get_mut(r) {
-                *cnt += 1;
-            } else {
-                dist.insert(*r, 1);
-            }
-        }
-        dist
-    }
-
-    pub fn count(&self, val: usize) -> usize { 
-        self.data.iter().filter(|x| **x == val).count()
-    }
-
-    pub fn find(&self, val: usize) -> Vec<usize> {
-        self.data.iter().enumerate().filter(|(idx, x)| **x == val)
-            .map(|(idx, x)| idx).collect()
-    }
-    pub fn filter(&self, mut f: impl FnMut(usize) -> bool) -> Vec<usize> {
-        self.data.iter().enumerate().filter(|(idx, x)| f(**x))
-            .map(|(idx, x)| idx).collect()
-    }
-
-
 }
-
 
 
 /// Set of results associated with a particular PMC event, where `I` is a type 

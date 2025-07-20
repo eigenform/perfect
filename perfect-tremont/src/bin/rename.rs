@@ -38,7 +38,7 @@ impl ZeroIdiomElim {
                 let results = harness.measure(asm_fn, 
                     &desc, 64, InputMethod::Fixed(0, 0)
                 ).unwrap();
-                let dist = results.get_distribution();
+                let dist = results.histogram();
                 let min = results.get_min();
                 let max = results.get_max();
 

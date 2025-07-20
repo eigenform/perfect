@@ -44,55 +44,33 @@ fn main() {
 /// Results
 /// =======
 ///
-/// On Zen 2 platforms: 
-///
 /// - STLF events only occur *reliably* with 39 padding stores
 /// - STLF events only occur once *during the first test iteration* when
 ///   there are more than 40 in-flight stores
-/// - After 48 in-flight stores, an STLF event *never* occurs. 
-///
-/// On Zen 3 platforms (with PSF and SSB disabled): 
-///
-/// - STLF events only occur *reliably* with ~16 padding stores. 
-/// - STLF events only occur once *during the first test iteration* when
-///   there are more than 16 in-flight stores.
-/// - After 64 in-flight stores, an STLF event *never* occurs. 
+/// - After 48 in-flight stores, an STLF event *never* occurs
 ///
 pub struct StlfStoreQueuePressure;
 impl StlfStoreQueuePressure {
     /// Address shared by the eligible store and load pair
     const STLF_ADDR: i32 = 0x0100_0000;
 
-    fn emit(num_stores: usize) -> X64Assembler {
+    fn emit(num_stores: usize) -> X64AssemblerFixed {
         let mut rng = rand::thread_rng();
-        let mut f = X64Assembler::new().unwrap();
+        let mut f = X64AssemblerFixed::new(
+            0x0000_1000_0000_0000,
+            0x0000_0000_0001_0000,
+        );
 
         // Random addresses for padding stores
-        //let mut addrs: Vec<i32> = (0x0100_0008..=0x0100_0ff8)
-        //    .step_by(8).collect();
-        //assert!(num_stores < addrs.len());
-        //addrs.shuffle(&mut rng);
-
-        // Put the load/store queues in some kind of known state (?)
-        for _ in 0..64 { 
-            dynasm!(f
-                ; mov rax, QWORD [0x0000_0004]
-                ; mfence
-            );
-        }
-        for _ in 0..64 { 
-            dynasm!(f
-                ; mov QWORD [0x0000_0004], rax
-                ; mfence
-            );
-        }
-
+        let mut addrs: Vec<i32> = (0x0100_0008..=0x0100_0ff8)
+            .step_by(8).collect();
+        assert!(num_stores < addrs.len());
+        addrs.shuffle(&mut rng);
 
         dynasm!(f
             ; mov rax, 0xdead_beef
             ; sfence
             ; lfence
-            //; mfence
         );
 
         f.emit_rdpmc_start(0, Gpr::R15 as u8);
@@ -123,26 +101,23 @@ impl StlfStoreQueuePressure {
 
         for num_stores in 0..=68 {
             let asm = Self::emit(num_stores);
-            let asm_reader = asm.reader();
-            let asm_tgt_buf = asm_reader.lock();
-            let asm_tgt_ptr = asm_tgt_buf.ptr(AssemblyOffset(0));
-            let asm_fn: MeasuredFn = unsafe { 
-                std::mem::transmute(asm_tgt_ptr)
-            };
 
             //println!("  Padding stores: {}", num_stores);
             for event in events.iter() {
                 let desc = event.as_desc();
-                let results = harness.measure(asm_fn, 
+                let results = harness.measure(asm.as_fn(), 
                     &desc, 512, InputMethod::Fixed(0, 0)
                 ).unwrap();
 
-                let dist = results.get_distribution();
+                let dist = results.histogram();
                 let min = results.get_min();
                 let max = results.get_max();
-                println!("  {:2} stores: {:03x}:{:02x} {} min={} max={} dist={:?}", 
+                println!("  {:2} stores: {:03x}:{:02x} {} mode={} {:?}",
                     num_stores,
-                    desc.id(), desc.mask(), desc.name(), min, max, dist);
+                    desc.id(), desc.mask(), desc.name(), 
+                    results.get_mode(),
+                    results.histogram()
+                );
             }
         }
         println!();
@@ -179,12 +154,9 @@ impl StlfStoreQueuePressure {
 /// Results
 /// =======
 ///
-/// For Zen 2: 
-///
-/// - An STLF event is reliably observed when the padding store has a set bit 
-///   in the range [11:3] (implying that bits [11:3] are used to distinguish 
-///   STLF eligibility)
-///
+/// An STLF event is reliably observed when the padding store has a set bit 
+/// in the range [11:3] (implying that bits [11:3] are used to distinguish 
+/// STLF eligibility).
 ///
 pub struct StlfEligibility;
 impl StlfEligibility {
@@ -268,13 +240,12 @@ impl StlfEligibility {
                 InputMethod::Fixed(addr, alias_addr)
             ).unwrap();
 
-            let dist = results.get_distribution();
+            let dist = results.histogram();
             let min = results.get_min();
             let max = results.get_max();
-            if min == 0 && max == 0 { continue; }
-            println!("  ({:08x}): [{:03x}:{:02x} {} min={} max={} dist={:?}]", 
+            println!("  ({:08x}): [{:03x}:{:02x} {} mode={} dist={:?}]", 
                 alias_addr, 
-                desc.id(), desc.mask(), desc.name(), min, max, dist);
+                desc.id(), desc.mask(), desc.name(), results.get_mode(), dist);
         }
         println!();
     }
@@ -297,17 +268,15 @@ impl StlfEligibility {
                 &desc, 512, InputMethod::Fixed(0, 0)
             ).unwrap();
 
-            let dist = results.get_distribution();
+            let dist = results.histogram();
             let min = results.get_min();
             let max = results.get_max();
-            if min == 0 && max == 0 { continue; }
-            println!("  Bit {:02} ({:08x}): [{:03x}:{:02x} {} min={} max={} dist={:?}]", 
+            println!("  Bit {:02} ({:08x}): [{:03x}:{:02x} {} mode={} dist={:?}]", 
                 bit, (Self::STLF_ADDR | disp),
-                desc.id(), desc.mask(), desc.name(), min, max, dist);
+                desc.id(), desc.mask(), desc.name(), results.get_mode(), dist);
         }
         println!();
     }
-
 }
 
 

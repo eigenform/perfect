@@ -324,7 +324,7 @@ impl ClearGhist {
                 InputMethod::List(&inputs)
             ).unwrap();
 
-            let dist = results.get_distribution();
+            let dist = results.histogram();
             let min = results.get_min();
             let max = results.get_max();
             let hitrate = results.count(0) as f32 / Self::NUM_ITER as f32;
@@ -524,7 +524,7 @@ impl CorrelatedBranches {
                     }),
                 ).unwrap();
 
-                let dist = results.get_distribution();
+                let dist = results.histogram();
                 let min = results.get_min();
                 let max = results.get_max();
 
@@ -563,7 +563,7 @@ impl CorrelatedBranches {
                     }),
                 ).unwrap();
 
-                let dist = results.get_distribution();
+                let dist = results.histogram();
                 let min = results.get_min();
                 let max = results.get_max();
 
@@ -694,7 +694,7 @@ impl CorrelatedBranchesSimple {
                 InputMethod::List(&inputs)
             ).unwrap();
 
-            let dist = results.get_distribution();
+            let dist = results.histogram();
             let min = results.get_min();
             let max = results.get_max();
 

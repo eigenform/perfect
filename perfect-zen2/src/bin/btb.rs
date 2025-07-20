@@ -130,7 +130,7 @@ impl BTBCapacity {
         ).unwrap();
 
         for result in results {
-            let dist = result.get_distribution();
+            let dist = result.histogram();
             let min = result.get_min();
             let max = result.get_max();
             println!("{:03x}:{:02x} ({:36}): min={:5} max={:5}",

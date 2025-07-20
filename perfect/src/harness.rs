@@ -517,6 +517,34 @@ impl PerfectHarness {
         }
         Ok(results)
     }
+}
+
+
+impl PerfectHarness {
+    // Inner loop used to take some number of measurements. 
+    //
+    // Ideally, measured code is totally decoupled from effects on the 
+    // machine that might be imparted by the body of this loop. 
+    // 
+    // For each requested iteration, we need to:
+    // - Load the inputs for this iteration
+    // - Call the harness with the requested function and inputs
+    // - Save the result from this iteration
+    //
+    #[inline(always)]
+    fn measure_inner_loop(
+        harness_fn: HarnessFn,
+        measured_fn: MeasuredFn,
+        iters: usize,
+        inputs: &[(usize, usize)],
+        results: &mut [usize],
+    ) {
+        for i in 0..iters { 
+            let (rdi, rsi) = inputs[i];
+            let res = harness_fn(rdi, rsi, measured_fn as usize);
+            results[i] = res;
+        }
+    }
 
     /// Run the provided function with the harness after configuring the 
     /// performance counters with the given event. 
@@ -532,6 +560,45 @@ impl PerfectHarness {
 
         // Allocate for output data produced while running the harness
         let mut results = vec![0; iters];
+
+        // Configure the appropriate counter with the requested event
+        let mut ctr = Self::make_perf_cfg(self.cfg.platform, &event);
+
+        ctr.reset().unwrap();
+        ctr.enable().unwrap();
+
+        Self::measure_inner_loop(
+            harness_fn, measured_fn, 
+            iters, &inputs, &mut results
+        );
+
+        ctr.disable().unwrap();
+
+        self.gpr_state.clear();
+        self.vgpr_state.clear();
+
+        Ok(MeasureResults {
+            data: RawResults(results),
+            event: event.clone(),
+            gpr_dumps: None,
+            vgpr_dumps: None,
+            inputs: Some(inputs),
+        })
+    }
+
+    pub fn measure_and_dump(&mut self,
+        measured_fn: MeasuredFn,
+        event: &EventDesc,
+        iters: usize,
+        input: InputMethod,
+   ) -> Result<MeasureResults, &str>
+    {
+        assert!(self.cfg.dump_gpr || self.cfg.dump_vgpr);
+
+        let inputs = Self::generate_inputs(&mut self.rng, iters, input);
+        let harness_fn = self.assembler.as_harness_fn();
+
+        let mut results = vec![0; iters];
         let mut gpr_dumps = if self.cfg.dump_gpr {
             Some(Vec::new()) 
         } else { 
@@ -543,21 +610,9 @@ impl PerfectHarness {
             None 
         };
 
-        // Configure the appropriate counter with the requested event
         let mut ctr = Self::make_perf_cfg(self.cfg.platform, &event);
-
         ctr.reset().unwrap();
         ctr.enable().unwrap();
-
-        // NOTE: This is a critical loop. 
-        // Ideally, measured code is totally decoupled from effects on the 
-        // machine that might be imparted by the body of this loop. 
-        // 
-        // For each requested iteration, we need to:
-        // - Load the inputs for this iteration
-        // - Call the harness with the requested function and inputs
-        // - Save the result from this iteration
-        // - Optionally save the general-purpose register state
 
         for i in 0..iters {
             let (rdi, rsi) = inputs[i];
@@ -575,7 +630,6 @@ impl PerfectHarness {
 
         self.gpr_state.clear();
         self.vgpr_state.clear();
-
         Ok(MeasureResults {
             data: RawResults(results),
             event: event.clone(),
@@ -584,5 +638,6 @@ impl PerfectHarness {
             inputs: Some(inputs),
         })
     }
+
 }
 

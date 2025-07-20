@@ -532,6 +532,7 @@ pub enum Zen2Event {
 
     // 0x39:01 counts for 8-bit stores?
     // 0x39:02 counts for 8-bit stores? 
+    // Counts for unaligned stores? 
 
     // 0x3a?
 
@@ -575,6 +576,10 @@ pub enum Zen2Event {
 
     // 0x4b
     LsPrefInstrDisp(u8),
+
+    // 0x4c:01 ???
+    // 0x4c:02 ???
+    // maybe related to 0x4d
 
     // 0x4d:01 - counts for xsave (???)
     // 0x4d:02 - counts for xsave (???)
@@ -664,7 +669,9 @@ pub enum Zen2Event {
 
     // 0x74 - counts for rdrand/rdseed
 
-    // 0x75
+    // 0x75:01
+    // 0x75:02
+    // 0x75:04
 
     // 0x76 
     LsNotHaltedCyc(u8),
@@ -706,6 +713,8 @@ pub enum Zen2Event {
     BpL1TlbMissL2TlbMiss(BpL1TlbMissL2TlbMissMask),
 
     // 0x86 - BpSnpReSync? "Pipeline Restart Due to Instruction Stream Probe" 
+    // NOTE: This seemingly doesn't count, at least on for a single thread 
+    // changing the instruction stream
 
     // 0x87
     IcFetchStallCyc(IcFetchStallCycMask),
@@ -718,7 +727,7 @@ pub enum Zen2Event {
     //  - xrstor
     //
 
-    // 0x89
+    // 0x89 - valid, unk
 
     // 0x8a
     BpL1BTBCorrect(u8),
@@ -743,6 +752,7 @@ pub enum Zen2Event {
 
 
     // 0x90: counts for ret only? no mask? (this is ClksBpStalled in 19h?)
+    // seemingly counts in scenario w/ self-modifying code
     // - ret?
 
     // 0x91 - Redirect from decode
@@ -759,7 +769,10 @@ pub enum Zen2Event {
 
     // 0x96: ?
 
-    // 0x97: valid?
+    // 0x97: valid, various masks are valid
+    // 0x97:01
+    // 0x97:02
+    // 0x97:04
 
     // 0x98: ?
 
@@ -780,15 +793,18 @@ pub enum Zen2Event {
 
     // 0x9e: valid? same as 9c and 9d?, no mask?
 
-    // 0x9f - Redirects? no mask?
+    // 0x9f - Redirects? (could also be pipeline re-sync?) no mask?
     //  - 1 for ret, mfence, cpuid, xrstor, conditional branch loop?
+    //  - 1 when a store hits current instruction stream? 
     // NOTE: this name is from 19h? maybe not accurate? 
     BpRedirect(BpRedirectMask),
 
     // 0xa0:01 counts during jcc loop
 
     // 0xa1? - oc_set_way_ent_acc in 19h
-    // 0x0a:01 counts during jcc, loop
+    // 0xa1:01 counts during jcc, loop
+    // 0xa1:02 
+    // 0xa1:04 
 
     // 0xa2? - no mask. oc_builds in 19h?
 

@@ -169,13 +169,13 @@ impl Zenbleed {
 
         // Take some measurements
         let desc = event.as_desc();
-        let results = harness.measure(asm_fn, 
+        let results = harness.measure_and_dump(asm_fn, 
             &desc, 16384, InputMethod::Fixed(0, 0)
         ).unwrap();
 
         let min = results.get_min();
         let max = results.get_max();
-        let dist = results.get_distribution();
+        let dist = results.histogram();
         println!("    {:03x}:{:02x} {:032} min={} max={} dist={:?}",
             desc.id(), desc.mask(), desc.name(), min, max, dist);
 
