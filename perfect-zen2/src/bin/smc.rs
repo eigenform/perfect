@@ -110,11 +110,9 @@ impl SmcSimple {
 
         // Emit a variable number of single-byte padding NOPs in-between 
         // the store and the patched instruction. 
-        //f.emit_nop_sled(padding);
         for _ in 0..padding { 
             dynasm!(f
-                //; nop
-                //; pause
+                ; nop
             );
         }
 
