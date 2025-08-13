@@ -1,0 +1,23 @@
+[package]
+name = "perfect-zen3"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+
+rand = "0.8.5"
+itertools = "0.11.0"
+perfect = { path = "../perfect" }
+clap = { version = "4.5.13", features = ["derive"] }
+perf-event = { git = "https://github.com/eigenform/perf-event", branch = "raw-event" }
+num_enum = "0.7.3"
+bitvec = "1.0.1"
+pretty-hex = "0.4.1"
+nix = "0.26.2"
+
+[dependencies.iced-x86]
+version = "*"
+
+
+[lints]
+workspace = true
