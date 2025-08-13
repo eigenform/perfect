@@ -108,8 +108,9 @@ fn print_env() {
         false => "disabled",
     };
     let boost = match PerfectEnv::sysfs_cpufreq_boost_enabled() {
-        true => "enabled [!!]",
-        false => "disabled",
+        Ok(true) => "enabled [!!]",
+        Ok(false) => "disabled",
+        Err(e) => "<couldn't read boost status?>",
     };
 
     //let gov = match PerfectEnv::sysfs_cpufreq_governor(15) {
@@ -198,11 +199,15 @@ fn main() -> Result<(), String> {
                 .map_err(|e: std::io::ErrorKind| format!("{:?}", e))?;
             PerfectEnv::sysfs_rdpmc_set(true)
                 .map_err(|e: std::io::ErrorKind| format!("{:?}", e))?;
-            PerfectEnv::sysfs_cpufreq_boost_set(false)
-                .map_err(|e: std::io::ErrorKind| format!("{:?}", e))?;
             PerfectEnv::procfs_mmap_min_addr_set(0)
                 .map_err(|e: std::io::ErrorKind| format!("{:?}", e))?;
-            println!("[!] Successfully applied default configuration");
+
+            if let Ok(_) = PerfectEnv::sysfs_cpufreq_boost_set(false) {
+            } else {
+                println!("[!] Couldn't change boost settings?");
+            }
+
+            println!("[*] Successfully applied default configuration");
             print_env();
         },
 

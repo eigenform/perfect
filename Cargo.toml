@@ -2,7 +2,7 @@
 resolver = "2"
 members = [
 	"perfect", "perfect-tremont", 
-	"perfect-zen2",
+	"perfect-zen2", "perfect-zen3",
 ]
 
 [workspace.lints.rust]

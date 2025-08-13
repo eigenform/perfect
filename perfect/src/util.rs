@@ -1,5 +1,6 @@
 
 pub mod msr;
+pub mod pagemap;
 
 use std::io::Read;
 use dynasmrt::{
@@ -58,13 +59,14 @@ impl PerfectEnv {
 
 
     /// Returns true if cpufreq boost is enabled.
-    pub fn sysfs_cpufreq_boost_enabled() -> bool { 
-        let mut f = std::fs::File::open(Self::BOOST_PATH).unwrap();
+    pub fn sysfs_cpufreq_boost_enabled() -> Result<bool, String> { 
+        let mut f = std::fs::File::open(Self::BOOST_PATH)
+            .map_err(|e| format!("{:?}", e))?;
         let mut res = String::new();
         f.read_to_string(&mut res).unwrap();
         match res.trim() {
-            "0" => false,
-            "1" => true,
+            "0" => Ok(false),
+            "1" => Ok(true),
             _ => unreachable!("{:02x?}", res.as_bytes()),
         }
     }

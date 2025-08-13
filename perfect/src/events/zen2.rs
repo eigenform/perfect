@@ -480,6 +480,10 @@ pub enum Zen2Event {
     //  - :80, rdrand, rdseed
 
     // 0x24
+    //
+    // NOTE: On Zen3, 
+    //   0x24:04 - seems to count when STLF cannot occur because store data 
+    //             cannot be resolved due to outstanding dependences?
     LsBadStatus2(LsBadStatus2Mask),
     
     // 0x25
@@ -523,9 +527,12 @@ pub enum Zen2Event {
     LsSTLF(u8),
 
     // 0x36
+    // 0x36:44 "read-modify-write hazard, or older stall"?
+    // 0x36:30 "parity error?"
     LsStoreCommitCancel(u8),
 
     // 0x37
+    // 0x37:01 - write-combining buffer full
     LsStoreCommitCancel2(u8),
 
     // 0x38?
@@ -806,10 +813,12 @@ pub enum Zen2Event {
     // 0xa1:02 
     // 0xa1:04 
 
-    // 0xa2? - no mask. oc_builds in 19h?
+    // NOTE: 0xa2, 0xa3, and 0xa4 do not count when the opcache is disabled? 
+
+    // 0xa2? - no mask. "oc_builds" in 19h?
+    // seemingly doesn't count when opcache is disabled on 17h?
 
     // 0xa3 - no mask. highly variable, probably some kind of latency?
-
     // 0xa4 - no mask. 
     //  - indirect call
     //  - ret
@@ -843,7 +852,9 @@ pub enum Zen2Event {
     // NOTE: 0xac and 0xad kind of behave the same? Adds up to LsNotHaltedCyc?
     // I would not be suprised if these are for the schedulers, or reflect
     // the ALU pipelines
-    // 0xac is valid, no mask
+
+    // 0xac is valid, no mask? 
+    // (mask 0x00 doesn't count, but all the other bits count the same?)
 
     // 0xad:01 - loops, ret
     // 0xad:02 - most ops
@@ -884,6 +895,12 @@ pub enum Zen2Event {
     // - cld
     // - pdep/pext
     // - ret
+    //
+    // NOTE: Different masks valid on zen3 parts?
+    // 0xb5:01
+    // 0xb5:02
+    // 0xb5:40
+    //
     Dsp0Stall(u8),
 
     // 0xb6:01,02,04 seem valid? 
@@ -1009,14 +1026,16 @@ pub enum Zen2Event {
     //      - direct unconditional branches
     //
     // NOTE: On Zen3, it seems like the masks work. 
-    // Mask 0x02 is probably related to loads/stores. 
-    // Seemingly increments on STLI (STLF failure)
+    // 0xd5:01 - valid
+    // 0xd5:02 - valid, seemingly increments on stlf interlock
+    // 0xd5:04 - valid
 
     // 0xd6 (doesn't seem to count anything...? ex_no_retire in 19h?)
 
     // 0xd7 ?
 
     // 0xd8 ?
+    // 0xd8:0x04 - valid on zen3?
 
     // 0xd9, from 19h - unverified?
     ExRetireEmpty(u8),
@@ -1089,17 +1108,31 @@ pub enum Zen2Event {
 
     // 0x1d0 - ExRetFusBrnchInst? 
 
-    // 0x1d1 ?
+    // 0x1d1:01 - valid on zen3?
+    // 0x1d1:02 - valid on zen3?
+    // 0x1d1:04 - valid on zen3?
+    // 0x1d1:08 - valid on zen3?
 
-    // 0x1d2 ?
+    // 0x1d2:01 - valid on zen3?
+    // 0x1d2:02 - valid on zen3?
+    // 0x1d2:04 - valid on zen3?
+    // 0x1d2:08 - valid on zen3?
+    // 0x1d2:10 - valid on zen3?
 
-    // 0x1d3 ?
+    // 0x1d3:02 - valid on zen3?
+    // 0x1d3:04 - valid on zen3?
+    // 0x1d3:10 - valid on zen3?
+    // 0x1d3:20 - valid on zen3?
+    // 0x1d3:40 - valid on zen3?
 
     // 0x1d4 ?
 
-    // 0x1d5 ?
+    // 0x1d5:00 - valid on zen3?
+    // 0x1d5:20 - valid on zen3?
+    // 0x1d5:40 - valid on zen3?
+    // 0x1d5:80 - valid on zen3?
 
-    // 0x1d6 - valid, unclear? 
+    // 0x1d6 - valid, (no mask on zen3?), unclear? 
 
     // 0x1d7
 
@@ -1116,6 +1149,18 @@ pub enum Zen2Event {
     // - counts during lock prefix ops?
     // - rdseed/rdrand
 
+    // 0x283 - valid on zen3?, no mask
+
+    // 0x287 - valid on zen3?, no mask
+    // 0x288 - valid on zen3?, no mask
+    // 0x289 - valid on zen3?, no mask
+    // 0x28a - valid on zen3?, no mask
+
+    // 0x28c - valid on zen3?, no mask
+    // 0x28f - valid on zen3?, no mask
+    // 0x296 - valid on zen3?, no mask
+
+    // 0x299 - valid on zen3?, no mask
 
     /// Bring-your-own event and mask. 
     Unk(u16, u8),
@@ -1128,7 +1173,12 @@ impl AsEventDesc for Zen2Event {
         match self { 
             Self::Unk(v, x) => {
                 let mask = MaskDesc::new_unk(*x);
-                EventDesc::new_unk(*v, mask)
+                // NOTE: Temporary labels for some uncertain ones
+                match v { 
+                    0x0a2 => EventDesc::new_unk_hint(*v, mask, "oc_builds?"),
+                    0x0a3 => EventDesc::new_unk_hint(*v, mask, "oc_??"),
+                    _ => EventDesc::new_unk(*v, mask),
+                }
             },
 
             // ---------------------------------

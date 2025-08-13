@@ -30,6 +30,14 @@ pub trait ResultList<D: Copy + Ord> {
     /// Return a reference to the list of values.
     fn data(&self) -> &Vec<D>;
 
+    fn get_value(&self, idx: usize) -> Option<D> {
+        self.data().get(idx).copied()
+    }
+    fn get_last_value(&self) -> D {
+        self.data().last().copied().unwrap()
+    }
+
+
     /// Return the number of observed values.
     fn len(&self) -> usize { self.data().len() }
 

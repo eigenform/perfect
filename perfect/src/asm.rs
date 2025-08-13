@@ -48,6 +48,7 @@ pub struct X64AssemblerFixed {
     pub managed: ManagedRelocs<X64Relocation>,
     pub error: Option<DynasmError>,
     pub committed: bool,
+    pub allocated: bool,
 }
 impl X64AssemblerFixed { 
 
@@ -123,6 +124,7 @@ impl X64AssemblerFixed {
 }
 
 impl X64AssemblerFixed { 
+    /// Create a new assembler and allocate the requested backing memory. 
     pub fn new(addr: usize, len: usize) -> Self {
         let ptr = Self::mmap_fixed(addr, len);
         Self { 
@@ -134,6 +136,25 @@ impl X64AssemblerFixed {
             managed: ManagedRelocs::new(),
             error: None,
             committed: false,
+            allocated: true,
+        }
+    }
+
+    /// Create a new assembler and *assume* that the given pointer and length
+    /// are safe to use as backing memory. 
+    ///
+    /// This function is unsafe because the backing memory is not allocated.
+    pub unsafe fn new_from_ptr(ptr: *mut u8, len: usize) -> Self { 
+        Self { 
+            ptr, 
+            len,
+            ops: Vec::new(),
+            labels: LabelRegistry::new(),
+            relocs: RelocRegistry::new(),
+            managed: ManagedRelocs::new(),
+            error: None,
+            committed: false,
+            allocated: false,
         }
     }
 
@@ -645,6 +666,46 @@ pub trait Emitter: DynasmLabelApi<Relocation=X64Relocation> {
             ; lfence
             ; add Rq(result), Rq(scratch)
             ; lfence
+        );
+    }
+
+    fn emit_aperf_start(&mut self, scratch: u8) {
+        dynasm!(self
+            ; lfence
+            ; mov rcx, 1 
+            ; lfence
+            ; .bytes [0x0f, 0x01, 0xfd] // RDPRU
+            ; lfence
+            ; mov Rq(scratch), rax
+            ; lfence
+        );
+    }
+
+    fn emit_aperf_end(&mut self, scratch: u8, result: u8) {
+        dynasm!(self
+            ; lfence
+            ; mov rcx, 1 
+            ; lfence
+            ; .bytes [0x0f, 0x01, 0xfd] // RDPRU
+            ; lfence
+            ; sub Rq(result), Rq(scratch)
+            ; lfence
+        );
+    }
+
+    fn emit_aperf_nofence_start(&mut self, scratch: u8) {
+        dynasm!(self
+            ; mov rcx, 1 
+            ; .bytes [0x0f, 0x01, 0xfd] // RDPRU
+            ; mov Rq(scratch), rax
+        );
+    }
+
+    fn emit_aperf_nofence_end(&mut self, scratch: u8, result: u8) {
+        dynasm!(self
+            ; mov rcx, 1 
+            ; .bytes [0x0f, 0x01, 0xfd] // RDPRU
+            ; sub Rq(result), Rq(scratch)
         );
     }
 

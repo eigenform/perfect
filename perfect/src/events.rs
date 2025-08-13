@@ -59,6 +59,15 @@ impl EventDesc {
             unk: true,
         }
     }
+    pub fn new_unk_hint(id: u16, mask: MaskDesc, name: &'static str) -> Self { 
+        Self { 
+            id,
+            mask: mask.mask,
+            name: format!("{}", name),
+            unk: true,
+        }
+    }
+
     pub fn name(&self) -> &str { &self.name }
     pub fn fs_name(&self) -> String {
         self.name().replace(".", "_").to_lowercase()
@@ -102,7 +111,7 @@ impl <E: AsEventDesc> EventSet<E> {
         }
     }
 
-    /// Add all unit mask bits for a particular event to the set.
+    /// Add all unit mask bits to the set.
     pub fn add_unknown(&mut self, id: u16) {
         for mask in &[0x00,0x01,0x02,0x04,0x08,0x10,0x20,0x40,0x80] {
             self.set.insert(E::unk_desc(id, *mask));
@@ -115,7 +124,7 @@ impl <E: AsEventDesc> EventSet<E> {
     }
 
 
-    /// Add all possible *combinations* of unit mask bits to the set.
+    /// Add *all possible combinations* of unit mask bits to the set.
     pub fn add_unknown_all(&mut self, id: u16) {
         for mask in 0x00..=0xff {
             self.set.insert(E::unk_desc(id, mask));

@@ -44,7 +44,7 @@ pub use crate::experiments::{
     DynamicEmitterCases,
     StaticEmitterCases,
 };
-pub use crate::stats::ResultList;
+pub use crate::stats::{ ResultList, MeasureResults };
 pub use clap::Parser;
 pub use crate::experiments::template::*;
 
