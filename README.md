@@ -15,6 +15,7 @@ relies on the "raw events" exposed via the Linux `perf` API in userspace.
 config.sh        - Wrapper for invoking setup scripts
 perfect/         - Main library crate
 perfect-zen2/    - Zen2 experiments
+perfect-zen3/    - Zen3 experiments
 perfect-tremont/ - Tremont experiments
 scripts/         - Miscellaneous scripts
 ```
@@ -45,9 +46,6 @@ depending on the particular experiment). These are *not* intended to be
 portable to different platforms since they necessarily take advantage of 
 implementation details specific to the microarchitecture. 
 
-See the [`./perfect-zen2`](./perfect-zen2/src/bin/) crate for the entire list
-of experiments. 
-
 ### Optimizations
 
 - [Memory Renaming Eligibility](./perfect-zen2/src/bin/memfile.rs)
@@ -74,9 +72,10 @@ of experiments.
 ### Security
 
 - [Observing CVE-2023-20593 (Zenbleed)](./perfect-zen2/src/bin/zenbleed.rs)
-- [Observing Speculative Loads with Timing](./perfect-zen2/src/bin/flush-reload.rs)
 - [Observing CVE-2021-26318/AMD-SB-1017 (PREFETCH Behavior Across Privilege Domains)](./perfect-zen2/src/bin/prefetch.rs)
 - [Observing CVE-2022-4543 (EntryBleed)](./perfect-zen2/src/bin/entrybleed.rs)
+- [Observing Speculative Loads with Timing (Flush+Reload)](./perfect-zen2/src/bin/flush-reload.rs)
+- [Observing L1D Way Mispredictions (Collide+Probe)](./perfect-zen3/src/bin/collide-probe.rs)
 
 ### Miscellania
 
