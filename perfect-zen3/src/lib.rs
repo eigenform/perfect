@@ -1,7 +1,5 @@
 
-//nix::ioctl_none_bad! { victim_ping, 0 }
 nix::ioctl_write_int_bad! { victim_ping, 0 }
-
 nix::ioctl_none_bad! { victim_invd, 1 }
 nix::ioctl_write_ptr_bad! { victim_read, 2, VictimMsg }
 
@@ -34,6 +32,9 @@ impl Victim {
         };
         Self { fd } 
     }
+
+    /// Return the raw file descriptor. 
+    pub fn fd(&self) -> i32 { self.fd }
 
     /// Read the address of the scratch page allocated by the module
     pub fn scratch_page(&self) -> usize {
