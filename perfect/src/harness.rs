@@ -2,6 +2,7 @@
 pub mod state;
 pub mod config;
 pub mod input;
+pub mod signal;
 pub use config::*;
 pub use state::*;
 pub use input::*;
@@ -76,6 +77,8 @@ pub struct PerfectHarness {
     /// Fixed backing allocation for emitted code implementing the harness. 
     assembler: X64AssemblerFixed,
 
+    handler_asm: X64AssemblerFixed,
+
     /// Saved stack pointer (for exiting the harness). 
     pub harness_state: Box<[u64; 16]>,
 
@@ -101,8 +104,13 @@ impl PerfectHarness {
         let assembler = X64AssemblerFixed::new(
             cfg.harness_addr, cfg.harness_size
         );
+        let handler_asm = X64AssemblerFixed::new(
+            cfg.handler_addr, 0x1000
+        );
+
         let mut res = Self {
             assembler,
+            handler_asm,
             cfg,
             rng: rand::thread_rng(),
             harness_state: Box::new([0; 16]),
@@ -117,6 +125,33 @@ impl PerfectHarness {
     /// Print disassembly for the entire harness. 
     pub fn disas(&self) {
         self.assembler.disas(AssemblyOffset(0), None);
+    }
+
+    /// Emit a signal handler (used for catching exceptions). 
+    pub fn emit_handler(&mut self, f: &dyn Fn(&mut X64AssemblerFixed)) {
+        let state_ptr = self.harness_state.as_ptr();
+        (f)(&mut self.handler_asm);
+        //dynasm!(self.handler_asm
+        //    // Restore the original stack pointer saved by the harness
+        //    ; mov rcx, QWORD state_ptr as _
+        //    ; mov rsp, [rcx]
+
+        //    // Restore original nonvolatile registers from the stack
+        //    ; pop r15
+        //    ; pop r14
+        //    ; pop r13
+        //    ; pop r12
+        //    ; pop rsi
+        //    ; pop rdi
+        //    ; pop rbx
+        //    ; pop rbp
+        //    ; ret
+        //);
+        self.handler_asm.commit().unwrap();
+    }
+
+    pub fn enable_handler(&mut self) {
+        signal::register_sigsegv_handler();
     }
 
     /// Emit the actual harness function during runtime.

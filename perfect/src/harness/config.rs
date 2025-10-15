@@ -40,6 +40,8 @@ pub struct HarnessConfig {
     pub harness_addr: usize,
     pub harness_size: usize,
 
+    pub handler_addr: usize,
+
     /// Optionally dump the state of the integer general-purpose registers 
     /// after running measured code.
     pub dump_gpr: bool,
@@ -77,10 +79,13 @@ pub struct HarnessConfig {
 impl HarnessConfig {
 
     /// Default base address for the harness. 
-    const DEFAULT_ADDR: usize = 0x0000_1337_0000_0000;
+    pub const DEFAULT_ADDR: usize = 0x0000_1337_0000_0000;
+
+    /// Default address for the signal handler.
+    pub const DEFAULT_HANDLER_ADDR: usize = 0x0000_1337_dead_0000;
 
     /// Default allocation size for the harness (64MiB)
-    const DEFAULT_SIZE: usize = 0x0000_0000_0400_0000;
+    pub const DEFAULT_SIZE: usize = 0x0000_0000_0400_0000;
 
     pub fn from_cmdline_args(args: &ExperimentArgs) -> Option<Self> { 
         if let Some(p) = args.platform {
@@ -99,6 +104,7 @@ impl HarnessConfig {
             pinned_core: Some(15),
             harness_addr: Self::DEFAULT_ADDR,
             harness_size: Self::DEFAULT_SIZE,
+            handler_addr: Self::DEFAULT_HANDLER_ADDR,
             arena_alloc: Some((0x0000_0000, 0x1000_0000)),
             dump_gpr: false,
             dump_vgpr: false,
@@ -116,6 +122,7 @@ impl HarnessConfig {
             pinned_core: Some(5),
             harness_addr: Self::DEFAULT_ADDR,
             harness_size: Self::DEFAULT_SIZE,
+            handler_addr: Self::DEFAULT_HANDLER_ADDR,
             arena_alloc: Some((0x0000_0000, 0x1000_0000)),
             dump_gpr: false,
             dump_vgpr: false,
@@ -134,6 +141,7 @@ impl HarnessConfig {
             pinned_core: Some(15),
             harness_addr: Self::DEFAULT_ADDR,
             harness_size: Self::DEFAULT_SIZE,
+            handler_addr: Self::DEFAULT_HANDLER_ADDR,
             arena_alloc: Some((0x0000_0000, 0x1000_0000)),
             dump_gpr: false,
             dump_vgpr: false,
@@ -152,8 +160,14 @@ impl HarnessConfig {
         self.harness_addr = addr;
         self
     }
+
     pub fn harness_size(mut self, size: usize) -> Self { 
         self.harness_size = size;
+        self
+    }
+
+    pub fn handler_addr(mut self, addr: usize) -> Self { 
+        self.handler_addr = addr;
         self
     }
 
