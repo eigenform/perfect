@@ -688,9 +688,12 @@ pub trait Emitter: DynasmLabelApi<Relocation=X64Relocation> {
             ; lfence
             ; .bytes [0x0f, 0x01, 0xfd] // RDPRU
             ; lfence
-            ; sub Rq(result), Rq(scratch)
-            ; lfence
+            ; sub rax, Rq(scratch)
         );
+        if result != Gpr::Rax as u8 {
+            dynasm!(self ; mov Rq(result), rax);
+        }
+        dynasm!(self ; lfence);
     }
 
     fn emit_aperf_nofence_start(&mut self, scratch: u8) {
@@ -705,8 +708,13 @@ pub trait Emitter: DynasmLabelApi<Relocation=X64Relocation> {
         dynasm!(self
             ; mov rcx, 1 
             ; .bytes [0x0f, 0x01, 0xfd] // RDPRU
-            ; sub Rq(result), Rq(scratch)
+            ; sub rax, Rq(scratch)
         );
+        if result != Gpr::Rax as u8 { 
+            dynasm!(self
+                ; mov Rq(result), rax
+            );
+        }
     }
 
 
@@ -894,7 +902,7 @@ impl From<u8> for VectorGpr {
 
 
 #[repr(u8)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Gpr {
     Rax = 0,
     Rcx = 1,
@@ -967,5 +975,36 @@ impl Distribution<Gpr> for Standard {
         }
     }
 }
+
+impl std::fmt::Display for Gpr { 
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        let s = match self { 
+            Self::Rax => "rax",
+            Self::Rcx => "rcx",
+            Self::Rdx => "rdx",
+            Self::Rbx => "rbx",
+            Self::Rsp => "rsp",
+            Self::Rbp => "rbp",
+            Self::Rsi => "rsi",
+            Self::Rdi => "rdi",
+            Self::R8  => "r8",
+            Self::R9  => "r9",
+            Self::R10 => "r10",
+            Self::R11 => "r11",
+            Self::R12 => "r12",
+            Self::R13 => "r13",
+            Self::R14 => "r14",
+            Self::R15 => "r15",
+        };
+        f.write_str(s)
+    }
+}
+
+pub const ALL_GPRS: [Gpr; 16] = [
+    Gpr::Rax, Gpr::Rbx, Gpr::Rcx, Gpr::Rdx,
+    Gpr::Rsi, Gpr::Rdi, Gpr::Rsp, Gpr::Rbp,
+    Gpr::R8,  Gpr::R9,  Gpr::R10, Gpr::R11,
+    Gpr::R12, Gpr::R13, Gpr::R14, Gpr::R15,
+];
 
 
