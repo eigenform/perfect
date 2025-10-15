@@ -186,6 +186,18 @@ impl PerfectEnv {
         Ok(())
     }
 
+    pub fn toggle_prefetch(cpu: usize, en: bool) -> Result<(), String> {
+        let val = Msr::rdmsr(0xc001_1022, cpu)?;
+        let next_val = if en { 
+            val & !0b0111_1010_0000_0000_0000
+        } else { 
+            val |  0b0111_1010_0000_0000_0000
+        };
+        Msr::wrmsr(0xc001_1022, cpu, next_val)?;
+        Ok(())
+    }
+
+
     /// Toggle "Speculative Store Bypass".
     /// Only valid on Zen 3 parts (and maybe later?)
     ///
@@ -293,8 +305,24 @@ impl PerfectEnv {
         };
         assert!(ptr as usize == addr);
         ptr as *mut u8
-
     }
+
+    pub fn mmap_fixed_ro(addr: usize, len: usize) -> *const u8 {
+        use nix::sys::mman::{ ProtFlags, MapFlags };
+
+        let ptr = unsafe { 
+            nix::sys::mman::mmap(std::num::NonZeroUsize::new(addr),
+                std::num::NonZeroUsize::new(len).unwrap(),
+                ProtFlags::PROT_READ,
+                MapFlags::MAP_ANONYMOUS | 
+                MapFlags::MAP_PRIVATE | 
+                MapFlags::MAP_FIXED, 0, 0).unwrap()
+        };
+        assert!(ptr as usize == addr);
+        ptr as *const u8
+    }
+
+
 }
 
 pub fn disas_single(buf: &ExecutableBuffer, offset: AssemblyOffset)

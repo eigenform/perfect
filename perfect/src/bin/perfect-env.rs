@@ -25,6 +25,9 @@ pub enum CpuFeature {
     /// Indirect Branch Restricted Speculation (Zen 3 and later)
     Ibrs,
 
+    /// Prefetchers (Zen 3 and later?)
+    Prefetch,
+
     /// Op Cache (known on Zen 2)
     OpCache,
     /// Floating-Point/Vector Move Elimination (known on Zen 2)
@@ -161,6 +164,10 @@ fn main() -> Result<(), String> {
                 CpuFeature::OpCache => {
                     PerfectEnv::toggle_opcache(cpu, state.as_bool())?;
                 },
+                CpuFeature::Prefetch => {
+                    PerfectEnv::toggle_prefetch(cpu, state.as_bool())?;
+                },
+
                 CpuFeature::FpMovElim => {
                     PerfectEnv::toggle_fp_mov_elim(cpu, state.as_bool())?;
                 },
