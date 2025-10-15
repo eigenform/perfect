@@ -19,6 +19,26 @@ impl RawResults {
             self.0.iter().map(|x| *x as i64 - floor_min as i64).collect()
         )
     }
+
+    pub fn get_avg(&self) -> f32 { 
+        let sum = self.0.iter().sum::<usize>() as f32;
+        sum / self.0.len() as f32
+    }
+
+    pub fn variance(&self) -> f32 { 
+        let len = self.0.len() as f32;
+        let mean: f32 = (self.0.iter().sum::<usize>() as f32) / len;
+        let sum = self.0.iter()
+            .map(|x| (*x as f32 - mean) * (*x as f32 - mean))
+            .fold(0.0, |res, x| res + x);
+        sum / (len - 1.0)
+    }
+
+    pub fn stddev(&self) -> f32 { 
+        self.variance().sqrt()
+    }
+
+
 }
 
 /// A *normalized* list of observed values. 
