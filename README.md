@@ -82,6 +82,7 @@ implementation details specific to the microarchitecture.
 - [Validating/Discovering PMC Events](./perfect-zen2/src/bin/pmc.rs)
 - [Speculatively Fuzzing x86 Instructions](./perfect-zen2/src/bin/specdec.rs)
 - [Self-Modifying Code](./perfect-zen2/src/bin/smc.rs)
+- [Data-dependent DIV Latency](./perfect-zen3/src/bin/div.rs)
 
 
 ## Environment Configuration
