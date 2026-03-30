@@ -182,11 +182,18 @@ impl X64AssemblerFixed {
     }
 
     /// Return a function pointer [HarnessFn] to this block of emitted code.
+    #[inline(always)]
     pub fn as_harness_fn(&self) -> HarnessFn {
         assert!(self.committed);
         unsafe { std::mem::transmute(self.ptr) }
     }
 
+    /// Return the backing allocation as a slice of bytes.
+    pub fn as_slice(&self) -> &[u8] { 
+        unsafe { 
+            std::slice::from_raw_parts(self.ptr, self.len)
+        }
+    }
 
     pub fn mprotect(&mut self, prot: ProtFlags) {
         unsafe { 
@@ -307,7 +314,7 @@ impl X64AssemblerFixed {
         let ptr: *const u8 = unsafe { 
             self.ptr.offset(offset.0 as isize)
         };
-        let addr: u64   = self.ptr as u64;
+        let addr: u64   = ptr as u64;
         let buf_len = self.cursor() - offset.0;
         let buf: &[u8]  = unsafe { 
             std::slice::from_raw_parts(ptr, buf_len)
@@ -335,7 +342,8 @@ impl X64AssemblerFixed {
             for b in instr_bytes.iter() {
                 bytestr.push_str(&format!("{:02x}", b));
             }
-            println!("{:016x}: {:32} {}", instr.ip(), bytestr, output);
+            println!("{:016x}: {:32} {}", instr.ip(), 
+                bytestr, output);
             num_inst += 1;
         }
     }
@@ -806,6 +814,35 @@ pub trait Emitter: DynasmLabelApi<Relocation=X64Relocation> {
             dynasm!(self ; jmp >flush_next; flush_next: );
         }
     }
+
+    fn emit_push_nonvolatile_gprs(&mut self) { 
+        dynasm!(self
+            ; push      rbp
+            ; push      rbx
+            ; push      rdi
+            ; push      rsi
+            ; push      r12
+            ; push      r13
+            ; push      r14
+            ; push      r15
+        );
+    }
+
+    fn emit_pop_nonvolatile_gprs(&mut self) { 
+        dynasm!(self
+            ; pop r15
+            ; pop r14
+            ; pop r13
+            ; pop r12
+            ; pop rsi
+            ; pop rdi
+            ; pop rbx
+            ; pop rbp
+        );
+    }
+
+
+
 }
 
 // Implement [Emitter] for all of the JIT assemblers we care about

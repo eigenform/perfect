@@ -562,7 +562,23 @@ pub fn build_pmc_counter(p: TargetPlatform, desc: &EventDesc) -> Counter {
         ctr
 }
 
-
+#[inline(always)]
+pub fn rdpru() -> usize {
+    unsafe { 
+        let l: u32;
+        let h: u32;
+        core::arch::asm!(r#"
+            lfence
+            rdpru
+            lfence
+        "#,
+            out("edx") h, 
+            out("eax") l,
+            in("ecx") 1,
+        );
+        (h as usize) << 32 | l as usize
+    }
+}
 
 
 #[cfg(test)]

@@ -113,7 +113,7 @@ impl VirtualAddress {
     pub fn compute_utag_map() -> BTreeMap<usize, BTreeSet<usize>> {
         let mut map: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
 
-        for input in (0x0000..=0x0ffffusize) {
+        for input in (0x0000..=0xffffusize) {
             let utag = ZEN2_L1D_UTAG_FN.evaluate(input << 12);
             if let Some(inputs) = map.get_mut(&utag) {
                 inputs.insert(input);

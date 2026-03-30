@@ -52,7 +52,7 @@ impl Msr {
         let prev = Self::rdmsr(msr, cpu)?;
         let next = if val { prev | (1 << bit) } else { prev & !(1 << bit) };
         Self::wrmsr(msr, cpu, next)?;
-        println!("[*] MSR {:08x}: {:016x} => {:016x}", msr, prev, next);
+        //eprintln!("[*] MSR {:08x}: {:016x} => {:016x}", msr, prev, next);
         Ok(())
     }
 
