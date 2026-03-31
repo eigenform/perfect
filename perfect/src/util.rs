@@ -542,6 +542,39 @@ pub fn flush_btb<const CNT: usize>() {
     }
 }
 
+/// Perform 'N' back-to-back indirect jumps. 
+#[inline(never)]
+pub fn clear_ghist_indir<const N: usize>() {
+    unsafe { 
+        core::arch::asm!(r#"
+        .rept {cnt}
+        lea rax, [rip + 2f]
+        jmp rax
+        2:
+        .endr
+        lfence
+        "#, cnt = const N,
+        out("rax") _,
+        );
+    }
+}
+
+/// Perform 'N' back-to-back direct jumps. 
+#[inline(never)]
+pub fn clear_ghist_dir<const N: usize>() {
+    unsafe { 
+        core::arch::asm!(r#"
+        .rept {cnt}
+        jmp 2f
+        2:
+        .endr
+        lfence
+        "#, cnt = const N,
+        );
+    }
+}
+
+
 // NOTE: Quick hack for building this outside of [PerfectHarness]
 pub fn build_pmc_counter(p: TargetPlatform, desc: &EventDesc) -> Counter { 
         let mut ctr = match p {

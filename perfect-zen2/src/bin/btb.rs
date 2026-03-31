@@ -7,12 +7,22 @@ use itertools::*;
 use std::collections::*;
 use perfect::uarch::btb::*;
 
-const USERSPACE_RANGE: std::ops::Range<usize> = {
-    0x0000_0000_0000..0x0000_7fff_ffff_ffff
-};
 const KIND: [IndBrn; 4] = [ 
     IndBrn::CallMem, IndBrn::CallReg, IndBrn::JmpMem, IndBrn::JmpReg
 ];
+
+/// Generate a random virtual address.
+///
+/// NOTE: The offset 0x80 is just a hack to make sure our emitters have 
+/// allocated enough space for us to put a short prologue. 
+/// This doesn't ("shouldn't") have any bearing on the test.
+fn generate_random_addr() -> usize { 
+    const USERSPACE_RANGE: std::ops::Range<usize> = {
+        0x0000_0000_0000..0x0000_7fff_ffff_ffff
+    };
+    let mut rng = thread_rng();
+    (rng.gen_range(USERSPACE_RANGE) & !0xff) + 0x80
+}
 
 
 fn main() {
@@ -20,20 +30,18 @@ fn main() {
     let mut rng = thread_rng();
 
     // Test different indirect branches. 
-    // FIXME: This will sometimes fail if we generate addresses that are 
-    // invalid (or aliasing with some other existing allocation).
     for brn_kind in KIND {
         let arg_aliasing = BTBAliasArgs { 
             desc: "aliasing",
-            victim_addr: rng.gen_range(USERSPACE_RANGE) & !0x1f,
+            victim_addr: generate_random_addr(),
             attacker_addr: None,
             kind: brn_kind,
         };
 
         let arg_nonaliasing = BTBAliasArgs { 
             desc: "non-aliasing",
-            victim_addr: rng.gen_range(USERSPACE_RANGE) & !0x1f,
-            attacker_addr: Some(rng.gen_range(USERSPACE_RANGE) & !0x1f),
+            victim_addr: generate_random_addr(),
+            attacker_addr: Some(generate_random_addr()),
             kind: brn_kind,
         };
 
@@ -163,125 +171,17 @@ pub struct BTBAliasArgs {
 ///
 pub struct BTBAliasing;
 impl BTBAliasing {
+    /// Number of test iterations
+    const ITERS: usize = 32;
 
-    /// Emit some kind of indirect branch at virtual address `addr`. 
-    fn emit_indir_brn(addr: usize, kind: IndBrn) -> X64AssemblerFixed {
-        let base = addr & 0xffff_ffff_ffff_e000;
-        let mut f = X64AssemblerFixed::new(
-            base,
-            0x0000_0000_0000_4000,
-        );
-        f.emit_push_nonvolatile_gprs();
-
-        // If we're using a memory operand, use a non-temporal store to 
-        // write the target address into memory somewhere. 
-        // This should expose the branch to extreme latency. 
-        match kind { 
-            IndBrn::CallMem | IndBrn::JmpMem => {
-                dynasm!(f
-                    ; mov r15, QWORD Self::TGT_STORAGE as i64
-                    ; movnti QWORD [r15], rdi
-                );
-            },
-            _ => {},
-        }
-
-        // Pad to the requested address, emit the requested indirect branch
-        f.pad_until(addr);
-        match kind { 
-            IndBrn::JmpMem => {
-                dynasm!(f ; jmp QWORD [r15]);
-            },
-            IndBrn::CallMem => { 
-                dynasm!(f ; call QWORD [r15]);
-            },
-            IndBrn::JmpReg => { 
-                dynasm!(f ; jmp rdi);
-            },
-            IndBrn::CallReg => { 
-                dynasm!(f ; call rdi);
-            },
-        }
-
-        f.emit_nop_sled(2048);
-
-        // If we're testing a CALL instruction, emit RET. 
-        // Otherwise, for JMP instructions, we expect the branch targets will 
-        // contain RET and return immediately to our caller. 
-        match kind { 
-            IndBrn::CallReg | IndBrn::CallMem => { 
-                f.emit_pop_nonvolatile_gprs();
-                f.emit_ret();
-                f.emit_lfence();
-            },
-            _ => {},
-        }
-
-        f.commit().unwrap();
-        f
-    }
-
-    /// Emit a target function for an indirect branch. 
-    fn emit_target(addr: usize, probe: bool, pop: bool) -> X64AssemblerFixed { 
-        let mut f = X64AssemblerFixed::new(
-            addr,
-            0x0000_0000_0000_4000
-        );
-
-        // Load from RSI (which may or may not be the probed cacheline)
-        if probe { 
-            dynasm!(f ; mov rax, QWORD [rsi]);
-        }
-
-        f.emit_nop_sled(2048);
-
-        // Restore nonvolatile GPRs before returning
-        if pop { 
-            f.emit_pop_nonvolatile_gprs();
-        }
-
-        f.emit_ret();
-        f.emit_lfence();
-        f.commit().unwrap();
-        f
-    }
-
-    /// Emit the code for a particular test. 
-    /// FIXME: For now, the target locations are fixed
-    fn emit_test(
-        victim_addr: usize,
-        attacker_addr: usize,
-        kind: IndBrn,
-    ) -> BTBAliasTest {
-        let victim = Self::emit_indir_brn(victim_addr, kind);
-        let attacker = Self::emit_indir_brn(attacker_addr, kind);
-
-        let (victim_tgt, attacker_tgt) = match kind { 
-            IndBrn::CallReg | IndBrn::CallMem => { 
-                (
-                    Self::emit_target(0x2222_4000, false, false), 
-                    Self::emit_target(0x2222_8000, true, false), 
-                )
-            },
-            IndBrn::JmpReg | IndBrn::JmpMem => { 
-                (
-                    Self::emit_target(0x2223_4000, false, true), 
-                    Self::emit_target(0x2223_8000, true, true), 
-                )
-            },
-        };
-
-        BTBAliasTest { 
-            victim, attacker, victim_tgt, attacker_tgt
-        }
-
-    }
-
-}
-
-impl BTBAliasing {
+    /// Address of the probed cacheline
     const PROBE_ADDR: usize = 0x1234_1234_1000;
+
+    /// Scratch memory for saving a branch target
     const TGT_STORAGE: usize = Self::PROBE_ADDR + 0x4c0;
+
+    /// Scratch memory for stack pointer
+    const RSP_STORAGE: usize = Self::PROBE_ADDR + 0x880;
 
     /// Generate a virtual address whose BTB index is colliding with the 
     /// BTB index for virtual address `addr`. 
@@ -298,38 +198,6 @@ impl BTBAliasing {
         alias
     }
 
-    /// Perform 'N' back-to-back indirect jumps. 
-    #[inline(never)]
-    fn clear_ghist_indir<const N: usize>() {
-        unsafe { 
-            core::arch::asm!(r#"
-            .rept {cnt}
-            lea rax, [rip + 2f]
-            jmp rax
-            2:
-            .endr
-            lfence
-            "#, cnt = const N,
-            out("rax") _,
-            );
-        }
-    }
-
-    /// Perform 'N' back-to-back indirect jumps. 
-    #[inline(never)]
-    fn clear_ghist_dir<const N: usize>() {
-        unsafe { 
-            core::arch::asm!(r#"
-            .rept {cnt}
-            jmp 2f
-            2:
-            .endr
-            lfence
-            "#, cnt = const N,
-            );
-        }
-    }
-
     /// Flush the probe cacheline at [`Self::PROBE_ADDR`].
     #[inline(always)]
     fn flush_probe() { 
@@ -340,9 +208,136 @@ impl BTBAliasing {
             core::arch::x86_64::_mm_lfence();
         }
     }
-}
 
-impl BTBAliasing {
+    /// Emit some kind of indirect branch at virtual address `addr`. 
+    ///
+    /// NOTE: We're using this to emit both the victim/attacker branches. 
+    fn emit_indir_brn(addr: usize, kind: IndBrn) -> X64AssemblerFixed {
+        let base = addr & 0xffff_ffff_ffff_e000;
+        let mut f = X64AssemblerFixed::new(
+            base,
+            0x0000_0000_0000_4000,
+        );
+        let exit = f.new_dynamic_label();
+
+        f.emit_push_nonvolatile_gprs();
+        dynasm!(f
+            ; mov rax, QWORD Self::RSP_STORAGE as i64
+            ; mov QWORD [rax], rsp
+            ; lea r14, [=>exit]
+            ; xor r15, r15
+        );
+
+        // If we're using a memory operand, use a non-temporal store to 
+        // write the target address into memory somewhere. 
+        // This should expose the branch to extreme latency. 
+        match kind { 
+            IndBrn::CallMem | IndBrn::JmpMem => {
+                dynasm!(f
+                    ; mov r15, QWORD Self::TGT_STORAGE as i64
+                    ; movnti QWORD [r15], rdi
+                );
+            },
+            _ => {},
+        }
+
+        // Pad to the requested address, emit the requested indirect branch
+        f.emit_lfence();
+        f.pad_until(addr);
+        match kind { 
+            IndBrn::JmpMem  => dynasm!(f ; jmp QWORD [r15]),
+            IndBrn::CallMem => dynasm!(f ; call QWORD [r15]),
+            IndBrn::JmpReg  => dynasm!(f ; jmp rdi),
+            IndBrn::CallReg => dynasm!(f ; call rdi),
+            _ => unimplemented!(),
+        }
+        f.emit_lfence();
+
+        // The target of our indirect branch is expected to jump back here 
+        // using the value in r14. 
+        dynasm!(f
+            ; .align 64
+            ; =>exit
+            ; lfence
+        );
+
+        // Restore stack pointer and registers, return to caller
+        dynasm!(f
+            ; mov rax, QWORD Self::RSP_STORAGE as i64
+            ; mov rsp, QWORD [rax]
+        );
+        f.emit_pop_nonvolatile_gprs();
+        f.emit_ret();
+        f.emit_lfence();
+        f.commit().unwrap();
+        f
+    }
+
+    /// Emit the "victim" target function. 
+    fn emit_victim_target(addr: usize) -> X64AssemblerFixed { 
+        let mut f = X64AssemblerFixed::new(
+            addr,
+            0x0000_0000_0000_4000
+        );
+        f.emit_lfence();
+        dynasm!(f
+            ; .align 64
+            ; jmp r14
+            ; lfence
+        );
+        f.commit().unwrap();
+        f
+    }
+
+    /// Emit the "attacker" target function. 
+    fn emit_attacker_target(addr: usize) -> X64AssemblerFixed { 
+        let mut f = X64AssemblerFixed::new(
+            addr,
+            0x0000_0000_0000_4000
+        );
+
+        // Load from RSI
+        dynasm!(f ; mov rax, QWORD [rsi]);
+
+        f.emit_lfence();
+        dynasm!(f
+            ; .align 64
+            ; jmp r14
+            ; lfence
+        );
+        f.commit().unwrap();
+        f
+    }
+
+    /// Emit the code for a particular test. 
+    ///
+    /// FIXME: For now, the target locations are fixed. 
+    /// Although presumably, this doesn't actually matter here?
+    fn emit_test(
+        victim_addr: usize,
+        attacker_addr: usize,
+        kind: IndBrn,
+    ) -> BTBAliasTest {
+        let victim = Self::emit_indir_brn(victim_addr, kind);
+        let attacker = Self::emit_indir_brn(attacker_addr, kind);
+        let (victim_tgt, attacker_tgt) = match kind { 
+            IndBrn::CallReg | IndBrn::CallMem => { 
+                (
+                    Self::emit_victim_target(0x2222_4000),
+                    Self::emit_attacker_target(0x2222_8000),
+                )
+            },
+            IndBrn::JmpReg | IndBrn::JmpMem => { 
+                (
+                    Self::emit_victim_target(0x2223_4000),
+                    Self::emit_attacker_target(0x2223_8000),
+                )
+            },
+        };
+        BTBAliasTest { 
+            victim, attacker, victim_tgt, attacker_tgt
+        }
+    }
 
     /// Run the test, then measure the probe cacheline and return the result
     fn run_test(
@@ -368,11 +363,11 @@ impl BTBAliasing {
         // In any case, this seems to reliably untrain whatever effects have 
         // been left by the previous test iteration. 
 
-        Self::clear_ghist_indir::<8192>();
+        clear_ghist_indir::<8192>();
 
         // Call the attacker, training the attacker's branch into the BTB
         // (while avoiding an access to the probe cacheline)
-        (attacker_fn)(attacker_tgt, Self::PROBE_ADDR + 0x8c0);
+        (attacker_fn)(attacker_tgt, Self::PROBE_ADDR + 0x440);
 
         // Explicitly flush the probe cacheline
         Self::flush_probe();
@@ -380,19 +375,21 @@ impl BTBAliasing {
         // Call the victim, invoke the victim's indirect branch. 
         (victim_fn)(victim_tgt, Self::PROBE_ADDR);
 
-        // Measure a load to the probe cacheline
-        let t0 = rdpru();
         unsafe { 
+            // Stall for pending memory operations.
+            // If the load occurred, the effects should be visible afterwards.
+            core::arch::x86_64::_mm_mfence();
+            core::arch::x86_64::_mm_lfence();
+
+            // Measure a load to the probe cacheline
+            let t0 = rdpru();
             core::ptr::read_volatile::<u64>(Self::PROBE_ADDR as _);
+            let t1 = rdpru();
+            t1 - t0
         }
-        let t1 = rdpru();
-        t1 - t0
     }
 
-    /// Emit and run a test.
-    ///
-    /// If `attacker_call_addr` is not provided, generate an address which 
-    /// is aliasing in the BTB with `victim_call_addr`. 
+    /// Emit and run a test specified by [`BTBAliasArgs`]. 
     fn run(arg: BTBAliasArgs) { 
 
         // Try to determine the noise floor for reading APERF with RDPRU. 
@@ -405,6 +402,8 @@ impl BTBAliasing {
             }
         }
 
+        // If an address was not provided, assume the caller wants us to 
+        // generate a colliding address for them
         let attacker_addr = if let Some(x) = arg.attacker_addr { 
             x
         } else { 
@@ -413,7 +412,7 @@ impl BTBAliasing {
 
         let test = Self::emit_test(arg.victim_addr, attacker_addr, arg.kind);
 
-        let mut results = RawResults(vec![0; 64]);
+        let mut results = RawResults(vec![0; Self::ITERS]);
         let probe_base = PerfectEnv::mmap_fixed(Self::PROBE_ADDR, 0x1000);
 
         println!("[*] Testing with {:?} ({})", arg.kind, arg.desc);
@@ -423,7 +422,7 @@ impl BTBAliasing {
         println!("  attacker_tgt: {:016x}", test.attacker_tgt.ptr as usize);
 
         // Run the test a couple of times
-        for i in 0..64 { 
+        for i in 0..Self::ITERS { 
             let res = Self::run_test(
                 test.victim.as_fn(),
                 test.attacker.as_fn(),
