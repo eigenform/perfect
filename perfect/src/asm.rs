@@ -171,11 +171,13 @@ impl X64AssemblerFixed {
     pub fn cur_addr(&self) -> usize { self.base_addr() + self.cursor() }
 
     /// Return a function pointer [MeasuredFn] to this block of emitted code.
+    #[inline(always)]
     pub fn as_fn(&self) -> MeasuredFn {
         assert!(self.committed);
         unsafe { std::mem::transmute(self.ptr) }
     }
 
+    #[inline(always)]
     pub fn as_extern_fn(&self) -> extern "C" fn(usize,usize) -> usize { 
         assert!(self.committed);
         unsafe { std::mem::transmute(self.ptr) }
@@ -298,15 +300,50 @@ impl X64AssemblerFixed {
             return Err("Assembled code doesn't fit into backing allocation");
         }
         if let Err(e) = self.encode_relocs() {
+            println!("{:?}", e);
             return Err("Failed to encode relocations");
         }
 
-        let buf: &mut [u8]  = unsafe { 
-            std::slice::from_raw_parts_mut(self.ptr as *mut u8, self.cursor())
-        };
+        // Number of bytes in the buffer
+        let num_bytes = self.ops.len();
+
+        let src = self.ops.as_ptr();
+        let dst = self.ptr as *mut u8;
+
+        // NOTE: Some memcpy implementations *really dislike* when we decide
+        // to use the null pointer as virtual address 0. 
+        unsafe { 
+            // Zero out the whole allocation
+            //dst.write_bytes(0, self.len);
+
+            if dst == std::ptr::null_mut() 
+            {
+                for i in 0..num_bytes { 
+                    let b = src.offset(i as _).read();
+                    dst.offset(i as _).write_volatile(b);
+                }
+            } else { 
+                dst.write_bytes(0, self.len);
+                std::ptr::copy_nonoverlapping(src, dst, num_bytes);
+            }
+        }
+
         self.committed = true;
-        buf.copy_from_slice(&self.ops);
         Ok(())
+    }
+
+    /// Clear all bytes in the backing allocation and reset the state 
+    /// of this assembler. 
+    pub fn clear(&mut self) { 
+        unsafe { 
+            self.ptr.cast_mut().write_bytes(0, self.len);
+        }
+        self.ops = Vec::new();
+        assert!(self.ops.len() == 0);
+        self.labels = LabelRegistry::new();
+        self.relocs = RelocRegistry::new();
+        self.managed = ManagedRelocs::new();
+        self.committed = false;
     }
 
     /// Disassemble bytes in the backing allocation. 
@@ -347,6 +384,16 @@ impl X64AssemblerFixed {
             num_inst += 1;
         }
     }
+
+    pub fn emit_jmp_rel32(&mut self, tgt: usize) { 
+        let off = (tgt as i64) - (self.cur_addr() as i64 + 5);
+        assert!(off < i32::MAX as i64, "invalid 32-bit signed offset {}", off);
+        assert!(off > i32::MIN as i64, "invalid 32-bit signed offset {}", off);
+        dynasm!(self
+            ; jmp DWORD off as i32
+        );
+    }
+
 }
 
 /// Presumably we want to call `munmap` when this object is destroyed. 
@@ -819,8 +866,14 @@ pub trait Emitter: DynasmLabelApi<Relocation=X64Relocation> {
         dynasm!(self
             ; push      rbp
             ; push      rbx
+            ; push      rdx
+            ; push      rcx
             ; push      rdi
             ; push      rsi
+            ; push      r8
+            ; push      r9
+            ; push      r10
+            ; push      r11
             ; push      r12
             ; push      r13
             ; push      r14
@@ -834,8 +887,14 @@ pub trait Emitter: DynasmLabelApi<Relocation=X64Relocation> {
             ; pop r14
             ; pop r13
             ; pop r12
+            ; pop r11
+            ; pop r10
+            ; pop r9
+            ; pop r8
             ; pop rsi
             ; pop rdi
+            ; pop rcx
+            ; pop rdx
             ; pop rbx
             ; pop rbp
         );
@@ -851,6 +910,7 @@ impl Emitter for X64AssemblerFixed {}
 
 
 // Various flavors of NOP encoding (these are from the AMD Family 17h SOG). 
+pub const NOP1:  [u8; 1] = [ 0x90 ];
 pub const NOP2:  [u8; 2] = [ 0x66, 0x90 ];
 pub const NOP3:  [u8; 3] = [ 0x0f, 0x1f, 0x00 ];
 pub const NOP4:  [u8; 4] = [ 0x0f, 0x1f, 0x40, 0x00 ];

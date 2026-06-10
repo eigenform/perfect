@@ -238,6 +238,23 @@ impl DeMsStallMask {
     }
 }
 
+#[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash)]
+pub enum DeSrcOpDispMask { 
+    Decoder,
+    OpCache,
+    Unk(u8),
+}
+impl DeSrcOpDispMask {
+    pub fn desc(&self) -> MaskDesc { 
+        match self { 
+            Self::Decoder => MaskDesc::new(0x01, "Decoder"),
+            Self::OpCache => MaskDesc::new(0x02, "OpCache"),
+            Self::Unk(x) => MaskDesc::new(*x, "Unk"),
+        }
+    }
+}
+
+
 
 #[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash)]
 pub enum DeDisOpsFromDecoderMask {
@@ -809,7 +826,8 @@ pub enum Zen2Event {
     // 0xa0:01 counts during jcc loop
 
     // 0xa1? - oc_set_way_ent_acc in 19h
-    // 0xa1:01 counts during jcc, loop
+    //   0xa1:01 - counts during jcc, loop?
+    //             this might count a number of OC entries..?
     // 0xa1:02 
     // 0xa1:04 
 
@@ -817,6 +835,8 @@ pub enum Zen2Event {
 
     // 0xa2? - no mask. "oc_builds" in 19h?
     // seemingly doesn't count when opcache is disabled on 17h?
+
+    // NOTE: I wouldn't be surprised if 0xa3/0xa4 are related to OC misses?
 
     // 0xa3 - no mask. highly variable, probably some kind of latency?
     // 0xa4 - no mask. 
@@ -844,7 +864,7 @@ pub enum Zen2Event {
     DeDisUopQueueEmpty(u8),
 
     // 0xaa 
-    DeSrcOpDisp(u8),
+    DeSrcOpDisp(DeSrcOpDispMask),
 
     // 0xab
     DeDisOpsFromDecoder(DeDisOpsFromDecoderMask),
@@ -1173,12 +1193,7 @@ impl AsEventDesc for Zen2Event {
         match self { 
             Self::Unk(v, x) => {
                 let mask = MaskDesc::new_unk(*x);
-                // NOTE: Temporary labels for some uncertain ones
-                match v { 
-                    0x0a2 => EventDesc::new_unk_hint(*v, mask, "oc_builds?"),
-                    0x0a3 => EventDesc::new_unk_hint(*v, mask, "oc_??"),
-                    _ => EventDesc::new_unk(*v, mask),
-                }
+                EventDesc::new_unk(*v, mask)
             },
 
             // ---------------------------------
@@ -1380,8 +1395,8 @@ impl AsEventDesc for Zen2Event {
                 let mask = MaskDesc::new_unk(*x);
                 EventDesc::new(0x0a9, "DeDisUopQueueEmpty", mask)
             },
-            Self::DeSrcOpDisp(x) => {
-                let mask = MaskDesc::new_unk(*x);
+            Self::DeSrcOpDisp(m) => {
+                let mask = m.desc();
                 EventDesc::new(0x0aa, "DeSrcOpDisp", mask)
             },
             Self::DeDisOpsFromDecoder(m) => {

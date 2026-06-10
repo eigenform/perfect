@@ -5,6 +5,9 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[lib]
+doctest = false
+
 [dependencies]
 perf-event = { git = "https://github.com/eigenform/perf-event", branch = "raw-event" }
 nix = "0.26.2"
@@ -16,6 +19,7 @@ bitvec = "1.0.1"
 num = { version = "0.4.0", features = ["num-bigint"] }
 signal-hook = "0.3.17"
 clap = { version = "4.5.13", features = ["derive"] }
+csv = "1.4.0"
 
 [dependencies.iced-x86]
 version = "*"

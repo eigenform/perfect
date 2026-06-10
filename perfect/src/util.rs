@@ -1,6 +1,7 @@
 
 pub mod msr;
 pub mod pagemap;
+pub mod maps;
 
 use std::io::Read;
 use dynasmrt::{
@@ -244,7 +245,7 @@ impl PerfectEnv {
     ///   - `false`: disabled
     ///   - `true`: enabled
     pub fn toggle_fp_mov_elim(cpu: usize, en: bool) -> Result<(), String> {
-        Msr::wrmsr_toggle(0xc001_1029, cpu, 1, !en)?;
+        Msr::wrmsr_toggle(0xc001_1029, cpu, 9, !en)?;
         Ok(())
     }
 

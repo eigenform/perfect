@@ -90,7 +90,7 @@ pub struct PerfectHarness {
     pub vgpr_state: Box<VectorGprState>,
 
     /// Harness configuration.
-    cfg: HarnessConfig,
+    pub cfg: HarnessConfig,
 
     pub rng: ThreadRng,
 }
@@ -461,7 +461,7 @@ impl PerfectHarness {
     ///
     /// NOTE: The event select MSRs are different between Intel and AMD,
     /// so the bits passed through a raw 'perf' event will be different. 
-    fn make_perf_cfg(platform: TargetPlatform, event: &EventDesc)
+    pub fn make_perf_cfg(platform: TargetPlatform, event: &EventDesc)
         -> Counter
     {
         match platform { 
