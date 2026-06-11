@@ -60,6 +60,7 @@ implementation details specific to the microarchitecture.
 - [Load Queue Capacity](./perfect-zen2/src/bin/ldq.rs)
 - [Reorder Buffer Capacity](./perfect-zen2/src/bin/rob.rs)
 - [Taken Branch Buffer Capacity](./perfect-zen2/src/bin/tbb.rs)
+- [Op Cache Capacity](./perfect-zen2/src/bin/opcache.rs)
 - [Dispatch Behavior](./perfect-zen2/src/bin/dispatch.rs)
 
 ### Predictors
